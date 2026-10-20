@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
+  <style>.tradingview-chart{overflow:hidden}.tradingview-chart iframe{width:100%;height:100%;border:0;display:block}</style>
   <style>.chart canvas{width:100%;height:100%;display:block}.chart-loading{position:absolute;inset:0;display:grid;place-items:center;color:#8d98a7;font-size:12px;background:#11161ed9}.chart-loading[hidden]{display:none}</style>
 </head>
 <body>
@@ -42,7 +43,7 @@
 
       <article class="panel chart-panel">
         <div class="panel-head"><div><span class="label">حركة السعر</span><h2>XAUUSD <small>· الذهب / دولار</small></h2></div><div class="timeframes"><button>1D</button><button>1H</button><button class="selected">15M</button><button>1M</button></div></div>
-        <div class="chart"><canvas id="priceChart" aria-label="شارت حي لأسعار الذهب"></canvas><div class="chart-loading" id="chartLoading">جاري تحميل بيانات Bybit...</div><span class="chart-tag" id="chartTag">—</span><span class="chart-time" id="chartTime">—</span></div>
+        <div class="chart tradingview-chart"><iframe src="https://www.tradingview.com/widgetembed/?symbol=OANDA%3AXAUUSD&interval=1&hidesidebar=1&symboledit=0&theme=dark&style=1&timezone=Africa%2FCairo" title="شارت الذهب XAUUSD من TradingView" loading="lazy" allowfullscreen></iframe></div>
       </article>
     </section>
 
