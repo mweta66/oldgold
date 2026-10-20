@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
-  <style>.tradingview-chart{overflow:hidden}.tradingview-chart iframe{width:100%;height:100%;border:0;display:block}</style>
+  <style>.tradingview-chart{overflow:hidden}.tradingview-chart iframe{width:100%;height:100%;border:0;display:block}.empty-state{padding:30px 10px;color:#8d98a7;font-size:12px;text-align:center}.primary-btn:disabled{cursor:not-allowed;opacity:.65}</style>
   <style>.chart canvas{width:100%;height:100%;display:block}.chart-loading{position:absolute;inset:0;display:grid;place-items:center;color:#8d98a7;font-size:12px;background:#11161ed9}.chart-loading[hidden]{display:none}</style>
 </head>
 <body>
@@ -26,19 +26,19 @@
     </section>
 
     <section class="stats" id="performance">
-      <article class="stat"><span>نسبة النجاح</span><strong>68.4%</strong><small class="positive">↑ 4.2% هذا الشهر</small></article>
-      <article class="stat"><span>الإشارات الناجحة</span><strong>41</strong><small>من أصل 60 إشارة</small></article>
-      <article class="stat"><span>العائد/المخاطرة</span><strong>1 : 1.5</strong><small>إعداد الاستراتيجية</small></article>
-      <article class="stat"><span>حالة النظام</span><strong class="system"><i></i> مستقر</strong><small>زمن الاستجابة 0.8 ثانية</small></article>
+      <article class="stat"><span>نسبة النجاح</span><strong>غير متاح</strong><small>بانتظار بيانات موثقة</small></article>
+      <article class="stat"><span>الإشارات الناجحة</span><strong>—</strong><small>لا توجد بيانات حية بعد</small></article>
+      <article class="stat"><span>العائد/المخاطرة</span><strong>—</strong><small>سيظهر بعد تشغيل الاستراتيجية</small></article>
+      <article class="stat"><span>حالة النظام</span><strong class="system"><i></i> في الإعداد</strong><small>لم يتم تفعيل الإشارات</small></article>
     </section>
 
     <section class="grid" id="signals">
       <article class="panel signal-panel">
-        <div class="panel-head"><div><span class="label">الإشارة الحالية</span><h2><span class="signal-pill buy">شراء</span> XAUUSD</h2></div><span class="status pending">معلقة</span></div>
-        <div class="signal-price"><span>سعر الذهب الحالي</span><strong>من TradingView <small>OANDA:XAUUSD</small></strong><b class="positive">سعر حي</b></div>
-        <div class="levels"><div><span>نقطة الدخول</span><strong>2,383.80</strong></div><div><span>وقف الخسارة</span><strong class="loss">2,380.80</strong></div><div><span>الهدف</span><strong class="target">2,388.30</strong></div></div>
-        <div class="risk-row"><span>المخاطرة المقترحة <b>0.5%</b></span><span>المدة المتوقعة <b>15 دقيقة</b></span></div>
-        <button class="primary-btn" id="detailsBtn">عرض تفاصيل الإشارة <span>←</span></button>
+        <div class="panel-head"><div><span class="label">الإشارة الحالية</span><h2><span class="signal-pill">—</span> XAUUSD</h2></div><span class="status pending">غير متاحة</span></div>
+        <div class="signal-price"><span>السعر المرجعي</span><strong>يظهر داخل الشارت <small>OANDA:XAUUSD</small></strong></div>
+        <div class="levels"><div><span>نقطة الدخول</span><strong>—</strong></div><div><span>وقف الخسارة</span><strong>—</strong></div><div><span>الهدف</span><strong>—</strong></div></div>
+        <div class="risk-row"><span>المخاطرة المقترحة <b>—</b></span><span>المدة المتوقعة <b>—</b></span></div>
+        <button class="primary-btn" id="detailsBtn" disabled>لا توجد إشارة موثقة حاليًا <span>—</span></button>
       </article>
 
       <article class="panel chart-panel">
@@ -48,7 +48,7 @@
     </section>
 
     <section class="bottom-grid">
-      <article class="panel table-panel"><div class="panel-head"><div><span class="label">آخر الإشارات</span><h2>سجل الإشارات</h2></div><a href="#signals" class="view-all">عرض الكل ←</a></div><div class="table-wrap"><table><thead><tr><th>الأصل</th><th>الاتجاه</th><th>الفريم</th><th>النتيجة</th><th>الوقت</th></tr></thead><tbody><tr><td><b>XAUUSD</b></td><td><span class="signal-pill buy">شراء</span></td><td>15M</td><td><span class="status won">حقق الهدف</span></td><td>اليوم، 10:15</td></tr><tr><td><b>XAUUSD</b></td><td><span class="signal-pill sell">بيع</span></td><td>1M</td><td><span class="status lost">أغلق بوقف</span></td><td>اليوم، 09:42</td></tr><tr><td><b>XAUUSD</b></td><td><span class="signal-pill buy">شراء</span></td><td>15M</td><td><span class="status won">حقق الهدف</span></td><td>أمس، 16:20</td></tr></tbody></table></div></article>
+      <article class="panel table-panel"><div class="panel-head"><div><span class="label">آخر الإشارات</span><h2>سجل الإشارات</h2></div></div><div class="empty-state">سيظهر سجل الإشارات هنا بعد تشغيل محرك الإشارات وربطه ببيانات حقيقية.</div></article>
       <article class="panel notice-panel"><span class="notice-icon">✦</span><h2>تداول بوعي</h2><p>الإشارات أدوات مساعدة وليست ضمانًا للربح. حافظ على إدارة المخاطر ولا تخاطر بأكثر مما تستطيع تحمله.</p><a href="#">اقرأ سياسة المخاطر ←</a></article>
     </section>
   </main>
