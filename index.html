@@ -1,59 +1,499 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="WetaGold منصة إشارات تداول الذهب" />
-  <title>WetaGold | إشارات الذهب</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
-  <style>.tradingview-chart{overflow:hidden}.tradingview-chart iframe{width:100%;height:100%;border:0;display:block}.empty-state{padding:30px 10px;color:#8d98a7;font-size:12px;text-align:center}.primary-btn:disabled{cursor:not-allowed;opacity:.65}</style>
-  <style>.chart canvas{width:100%;height:100%;display:block}.chart-loading{position:absolute;inset:0;display:grid;place-items:center;color:#8d98a7;font-size:12px;background:#11161ed9}.chart-loading[hidden]{display:none}</style>
-</head>
-<body>
-  <header class="topbar">
-    <a class="brand" href="#top"><span class="brand-mark">W</span><span>Weta<span>Gold</span></span></a>
-    <nav><a class="active" href="#dashboard">لوحة المتابعة</a><a href="#signals">الإشارات</a><a href="#performance">الأداء</a></nav>
-    <div class="top-actions"><button class="icon-btn" aria-label="الإشعارات">⌁</button><button class="user-btn">حسابي <span>⌄</span></button></div>
-  </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="WetaGold — منصة متابعة إشارات الذهب وإدارة اشتراكك"
+    />
+    <meta name="theme-color" content="#0b0e14" />
+    <title>WetaGold | إشارات الذهب</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">انتقل للمحتوى</a>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="WetaGold الرئيسية"
+        ><span class="brand-mark" aria-hidden="true">W</span
+        ><span dir="ltr">Weta<span class="gold">Gold</span></span></a
+      >
+      <nav aria-label="القائمة الرئيسية">
+        <a href="#memberPanel" class="member-only" hidden>الإشارات</a>
+        <a href="#accountPanel" class="member-only" hidden>حسابي</a>
+        <a href="#adminPanel" id="adminNav" hidden>لوحة المدير</a>
+      </nav>
+      <div class="top-actions">
+        <span id="identity" class="muted"></span
+        ><button id="loginButton" class="primary-btn" type="button">
+          تسجيل الدخول</button
+        ><button id="logoutButton" class="secondary-btn" type="button" hidden>
+          تسجيل الخروج
+        </button>
+      </div>
+    </header>
 
-  <main id="top" class="container">
-    <section class="hero" id="dashboard">
-      <div><p class="eyebrow"><span class="live-dot"></span> السوق مفتوح · بيانات TradingView مباشرة</p><h1>إشارات أوضح.<br /><em>قرارات أذكى.</em></h1><p class="hero-copy">تابع حركة الذهب بثقة من خلال إشارات محسوبة وإدارة مخاطرة واضحة.</p></div>
-      <div class="hero-meta"><span>آخر تحديث</span><strong id="lastUpdate">الآن</strong><button class="refresh" id="refreshBtn">↻ تحديث البيانات</button></div>
-    </section>
+    <main class="container" id="main">
+      <p id="globalError" class="message error" role="alert" hidden></p>
+      <section class="hero" id="landing">
+        <div class="hero-content">
+          <p class="eyebrow">WETAGOLD · GOLD SIGNALS</p>
+          <h1>الذهب يستحق<br /><span class="gold">رؤية أوضح.</span></h1>
+          <p class="hero-copy">
+            مكان واحد لمتابعة إشارات XAUUSD، مستويات الدخول والخروج، وصلاحيات
+            اشتراكك.
+          </p>
+          <button class="primary-btn hero-button" id="heroLogin" type="button">
+            ادخل لحسابك <span aria-hidden="true">←</span>
+          </button>
+          <p class="muted small">
+            الحسابات والاشتراكات بتتفعّل عن طريق إدارة WetaGold.
+          </p>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <span class="orbit"></span
+          ><span class="gold-symbol">Au<span>79</span></span>
+          <div class="art-caption" dir="ltr">
+            XAU / USD<span>CLARITY IN EVERY MOVE</span>
+          </div>
+        </div>
+        <div class="feature-strip">
+          <div>
+            <b>حسابك، صلاحياتك</b><span>مدة تفعيل وحصة إشارات واضحة</span>
+          </div>
+          <div>
+            <b>متابعة منظمة</b><span>دخول، وقف، هدف وحالة كل إشارة</span>
+          </div>
+          <div>
+            <b>تنبيهات Telegram</b><span>اربط حسابك لاستقبال إشاراتك</span>
+          </div>
+        </div>
+      </section>
 
-    <section class="stats" id="performance">
-      <article class="stat"><span>نسبة النجاح</span><strong>غير متاح</strong><small>بانتظار بيانات موثقة</small></article>
-      <article class="stat"><span>الإشارات الناجحة</span><strong>—</strong><small>لا توجد بيانات حية بعد</small></article>
-      <article class="stat"><span>العائد/المخاطرة</span><strong>—</strong><small>سيظهر بعد تشغيل الاستراتيجية</small></article>
-      <article class="stat"><span>حالة النظام</span><strong class="system"><i></i> في الإعداد</strong><small>لم يتم تفعيل الإشارات</small></article>
-    </section>
+      <section id="memberPanel" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">MEMBER WORKSPACE</p>
+            <h1 class="page-title">لوحة الإشارات</h1>
+            <p class="muted">OANDA:XAUUSD · اتجاه 15 دقيقة / دخول الدقيقة</p>
+          </div>
+          <div class="refresh-tools">
+            <span id="lastUpdate" class="muted small">لم يتم التحديث</span
+            ><button id="refreshButton" class="secondary-btn" type="button">
+              تحديث
+            </button>
+          </div>
+        </div>
+        <div class="stats" id="performance">
+          <article class="stat">
+            <span>الإشارات المستلمة</span><strong id="usedStat">—</strong>
+          </article>
+          <article class="stat">
+            <span>المتبقي في حسابك</span><strong id="remainingStat">—</strong>
+          </article>
+          <article class="stat">
+            <span>نسبة النجاح المسجلة</span><strong id="winStat">—</strong
+            ><small id="winNote">لا توجد نتائج مغلقة بعد</small>
+          </article>
+          <article class="stat">
+            <span>صلاحية الحساب</span
+            ><strong id="expiryStat" class="date-value">—</strong
+            ><small>كل التواريخ بتوقيت UTC</small>
+          </article>
+        </div>
+        <p id="accessNotice" class="message" hidden></p>
+        <div class="workspace-grid" id="signalWorkspace">
+          <article class="panel">
+            <div class="panel-head">
+              <h2>الإشارات الحالية</h2>
+              <span class="muted small">XAUUSD</span>
+            </div>
+            <div id="currentSignal">
+              <div class="empty-state">لا توجد إشارات متاحة لحسابك حاليًا.</div>
+            </div>
+          </article>
+          <article class="panel chart-panel" id="chartPanel">
+            <div class="panel-head">
+              <div>
+                <h2>شارت الذهب</h2>
+                <span class="muted small">TradingView · OANDA:XAUUSD</span>
+              </div>
+              <div class="chart-actions">
+                <div class="timeframes" aria-label="فريم الشارت" dir="ltr">
+                  <button
+                    type="button"
+                    data-interval="1"
+                    aria-pressed="true"
+                    class="selected"
+                  >
+                    1M</button
+                  ><button
+                    type="button"
+                    data-interval="15"
+                    aria-pressed="false"
+                  >
+                    15M
+                  </button>
+                </div>
+                <button
+                  id="expandChart"
+                  class="secondary-btn small"
+                  type="button"
+                  aria-expanded="false"
+                >
+                  تكبير
+                </button>
+              </div>
+            </div>
+            <div class="chart" id="chartContainer"></div>
+            <p class="small muted">
+              السعر المرجعي داخل الشارت. قد يختلف عن سعر التنفيذ لدى وسيطك.
+            </p>
+            <a
+              class="text-link small"
+              href="https://www.tradingview.com/chart/?symbol=OANDA%3AXAUUSD"
+              target="_blank"
+              rel="noopener noreferrer"
+              >افتح الشارت على TradingView ↗</a
+            >
+          </article>
+        </div>
+        <article class="panel history-panel">
+          <div class="panel-head">
+            <h2>سجل إشارات حسابك</h2>
+            <div class="field compact">
+              <label for="historyFilter">تصفية الحالة</label
+              ><select id="historyFilter">
+                <option value="all">كل الحالات</option>
+                <option value="pending">معلقة</option>
+                <option value="open">مفتوحة</option>
+                <option value="target">هدف</option>
+                <option value="stopped">وقف</option>
+                <option value="expired">منتهية</option>
+                <option value="cancelled">ملغاة</option>
+              </select>
+            </div>
+          </div>
+          <div id="history" class="empty-state">لا توجد إشارات مستلمة.</div>
+        </article>
+      </section>
 
-    <section class="grid" id="signals">
-      <article class="panel signal-panel">
-        <div class="panel-head"><div><span class="label">الإشارة الحالية</span><h2><span class="signal-pill">—</span> XAUUSD</h2></div><span class="status pending">غير متاحة</span></div>
-        <div class="signal-price"><span>السعر المرجعي</span><strong>يظهر داخل الشارت <small>OANDA:XAUUSD</small></strong></div>
-        <div class="levels"><div><span>نقطة الدخول</span><strong>—</strong></div><div><span>وقف الخسارة</span><strong>—</strong></div><div><span>الهدف</span><strong>—</strong></div></div>
-        <div class="risk-row"><span>المخاطرة المقترحة <b>—</b></span><span>المدة المتوقعة <b>—</b></span></div>
-        <button class="primary-btn" id="detailsBtn" disabled>لا توجد إشارة موثقة حاليًا <span>—</span></button>
-      </article>
+      <section class="panel account-panel" id="accountPanel" hidden>
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">YOUR ACCOUNT</p>
+            <h2>الحساب والتنبيهات</h2>
+          </div>
+          <span id="accountState" class="badge neutral">—</span>
+        </div>
+        <div class="account-grid">
+          <div>
+            <h3>Telegram</h3>
+            <p class="muted" id="telegramStatus">حسابك غير مربوط.</p>
+            <button id="linkTelegram" class="secondary-btn" type="button">
+              ربط Telegram</button
+            ><button
+              id="unlinkTelegram"
+              class="danger-btn"
+              type="button"
+              hidden
+            >
+              فك الربط</button
+            ><a
+              id="telegramLink"
+              class="text-link"
+              target="_blank"
+              rel="noopener noreferrer"
+              hidden
+              >افتح البوت واضغط Start لإكمال الربط ↗</a
+            >
+            <p class="small muted">
+              الإشارات الجديدة المخصصة لحسابك توصلك في رسالة خاصة بعد الربط.
+            </p>
+            <p id="telegramMessage" role="status" class="small"></p>
+          </div>
+          <form id="passwordForm">
+            <h3>تغيير كلمة المرور</h3>
+            <div class="field">
+              <label for="currentPassword">كلمة المرور الحالية</label
+              ><input
+                id="currentPassword"
+                type="password"
+                autocomplete="current-password"
+                required
+                maxlength="128"
+              />
+            </div>
+            <div class="field">
+              <label for="newPassword"
+                >كلمة المرور الجديدة · 12 حرفًا على الأقل</label
+              ><input
+                id="newPassword"
+                type="password"
+                autocomplete="new-password"
+                minlength="12"
+                maxlength="128"
+                required
+              />
+            </div>
+            <button class="secondary-btn" type="submit">
+              حفظ وإعادة تسجيل الدخول
+            </button>
+            <p id="passwordMessage" role="status" class="small"></p>
+          </form>
+        </div>
+      </section>
 
-      <article class="panel chart-panel">
-        <div class="panel-head"><div><span class="label">حركة السعر</span><h2>XAUUSD <small>· الذهب / دولار</small></h2></div><div class="timeframes"><button>1D</button><button>1H</button><button class="selected">15M</button><button>1M</button></div></div>
-        <div class="chart tradingview-chart"><iframe id="tradingviewChart" src="https://www.tradingview.com/widgetembed/?symbol=OANDA%3AXAUUSD&interval=1&hidesidebar=1&symboledit=0&theme=dark&style=1" title="شارت الذهب XAUUSD من TradingView" loading="lazy" allowfullscreen></iframe></div>
-      </article>
-    </section>
+      <section id="adminPanel" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">ADMIN CONTROL CENTER</p>
+            <h2 class="page-title">إدارة WetaGold</h2>
+          </div>
+          <button id="pauseButton" class="secondary-btn" type="button">
+            —
+          </button>
+        </div>
+        <p id="adminMessage" class="message" role="status" hidden></p>
+        <div class="admin-grid">
+          <article class="panel">
+            <h3>حسابات المشتركين</h3>
+            <form id="userForm">
+              <input type="hidden" id="editUserId" />
+              <div class="field">
+                <label for="userEmail">البريد الإلكتروني</label
+                ><input
+                  id="userEmail"
+                  type="email"
+                  autocomplete="off"
+                  maxlength="254"
+                  required
+                />
+              </div>
+              <div class="field">
+                <label for="userPassword"
+                  >كلمة المرور · 12 حرفًا على الأقل</label
+                ><input
+                  id="userPassword"
+                  type="password"
+                  autocomplete="new-password"
+                  minlength="12"
+                  maxlength="128"
+                  required
+                /><small class="muted"
+                  >عند تعديل حساب: اتركها فارغة للاحتفاظ بكلمة المرور.</small
+                >
+              </div>
+              <div class="two-fields">
+                <div class="field">
+                  <label for="userQuota">إجمالي حصة الإشارات</label
+                  ><input
+                    id="userQuota"
+                    type="number"
+                    min="0"
+                    max="100000"
+                    step="1"
+                    required
+                  />
+                </div>
+                <div class="field">
+                  <label for="userExpiry">نهاية التفعيل · UTC</label
+                  ><input id="userExpiry" type="datetime-local" required />
+                </div>
+              </div>
+              <label class="check-field"
+                ><input id="userActive" type="checkbox" checked /> الحساب
+                مفعّل</label
+              >
+              <div class="button-row">
+                <button class="primary-btn" type="submit" id="saveUser">
+                  إنشاء حساب</button
+                ><button
+                  class="secondary-btn"
+                  type="button"
+                  id="cancelEdit"
+                  hidden
+                >
+                  إلغاء التعديل
+                </button>
+              </div>
+            </form>
+          </article>
+          <article class="panel">
+            <h3>نشر إشارة</h3>
+            <p class="small muted">
+              أدخل المستويات من OANDA:XAUUSD بعد مراجعتها. الأسعار لا تُقرأ
+              تلقائيًا من الشارت.
+            </p>
+            <form id="signalForm">
+              <div class="field">
+                <label for="direction">الاتجاه</label
+                ><select id="direction">
+                  <option value="buy">شراء · Long</option>
+                  <option value="sell">بيع · Short</option>
+                </select>
+              </div>
+              <div class="three-fields">
+                <div class="field">
+                  <label for="entry">الدخول</label
+                  ><input
+                    id="entry"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                  />
+                </div>
+                <div class="field">
+                  <label for="stop">الوقف</label
+                  ><input
+                    id="stop"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                  />
+                </div>
+                <div class="field">
+                  <label for="target">الهدف</label
+                  ><input
+                    id="target"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                  />
+                </div>
+              </div>
+              <div class="two-fields">
+                <div class="field">
+                  <label for="referencePrice">السعر المرجعي المراجَع</label
+                  ><input
+                    id="referencePrice"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                  />
+                </div>
+                <div class="field">
+                  <label for="quoteAt">وقت السعر · UTC</label
+                  ><input id="quoteAt" type="datetime-local" required />
+                </div>
+              </div>
+              <p class="small muted">
+                صلاحية الإشارة المعلقة 15 دقيقة. تخصم إشارة واحدة من حصة كل
+                مشترك مؤهل عند النشر.
+              </p>
+              <button class="primary-btn" id="publishButton" type="submit">
+                نشر وإرسال للمستحقين
+              </button>
+            </form>
+          </article>
+        </div>
+        <article class="panel table-panel">
+          <h3>الحسابات والصلاحيات</h3>
+          <div class="table-wrap" id="usersTable"></div>
+        </article>
+        <article class="panel telegram-panel">
+          <div class="panel-head">
+            <h3>ربط Telegram وإرسال الإشارات</h3>
+            <div class="button-row">
+              <button class="secondary-btn" type="button" id="checkTelegram">
+                فحص اتصال البوت</button
+              ><button class="secondary-btn" type="button" id="retryTelegram">
+                إعادة محاولة الرسائل الفاشلة
+              </button>
+            </div>
+          </div>
+          <p id="adminTelegramStatus" class="muted"></p>
+          <p id="deliveryStatus" class="small muted"></p>
+          <p id="botCheckMessage" class="small" role="status"></p>
+          <details>
+            <summary>خطوات تفعيل الربط</summary>
+            <ol>
+              <li>
+                أنشئ بوت عبر BotFather وأضف توكن البوت في إعدادات الخادم السرية
+                باسم <code>TELEGRAM_BOT_TOKEN</code>.
+              </li>
+              <li>
+                اربط حساب كل مشترك من قسم Telegram داخل حسابه. الرسائل الخاصة
+                تحترم حصة الإشارات ومدة التفعيل.
+              </li>
+              <li>
+                اختياريًا: أضف البوت إلى جروب الإدارة بصلاحية إرسال، واضبط
+                <code>TELEGRAM_ADMIN_CHAT_ID</code>. الجروب يستقبل كل الإشارات
+                للإدارة فقط.
+              </li>
+            </ol>
+            <p class="small muted">
+              استخدم نسخة خادم واحدة للبوت. التوكن لا يُدخل في الموقع أو
+              المستودع.
+            </p>
+          </details>
+        </article>
+        <article class="panel">
+          <h3>النسخ الاحتياطي اليومي</h3>
+          <p id="backupStatus" class="small muted"></p>
+        </article>
+        <article class="panel">
+          <h3>سجل إجراءات الإدارة</h3>
+          <div id="auditLog" class="small muted"></div>
+        </article>
+      </section>
+      <noscript
+        ><p class="message">
+          فعّل JavaScript لاستخدام تسجيل الدخول ولوحة الإشارات.
+        </p></noscript
+      >
+    </main>
 
-    <section class="bottom-grid">
-      <article class="panel table-panel"><div class="panel-head"><div><span class="label">آخر الإشارات</span><h2>سجل الإشارات</h2></div></div><div class="empty-state">سيظهر سجل الإشارات هنا بعد تشغيل محرك الإشارات وربطه ببيانات حقيقية.</div></article>
-      <article class="panel notice-panel"><span class="notice-icon">✦</span><h2>تداول بوعي</h2><p>الإشارات أدوات مساعدة وليست ضمانًا للربح. حافظ على إدارة المخاطر ولا تخاطر بأكثر مما تستطيع تحمله.</p><a href="#">اقرأ سياسة المخاطر ←</a></article>
-    </section>
-  </main>
-  <footer><span>© 2026 WetaGold</span><span>Trade Gold with an Edge</span><span>بيانات تعليمية وليست نصيحة مالية</span></footer>
-  <div class="toast" id="toast">تم تحديث البيانات بنجاح</div>
-  <script src="app.js"></script>
-</body>
+    <dialog id="loginDialog" aria-labelledby="loginTitle">
+      <form id="loginForm">
+        <button
+          class="dialog-close"
+          id="closeLogin"
+          type="button"
+          aria-label="إغلاق"
+        >
+          ×
+        </button>
+        <p class="eyebrow">WELCOME TO WETAGOLD</p>
+        <h2 id="loginTitle">تسجيل الدخول</h2>
+        <p class="muted small">استخدم بيانات الحساب اللي أنشأها لك المدير.</p>
+        <div class="field">
+          <label for="loginEmail">البريد الإلكتروني</label
+          ><input
+            id="loginEmail"
+            type="email"
+            autocomplete="username"
+            required
+            maxlength="254"
+          />
+        </div>
+        <div class="field">
+          <label for="loginPassword">كلمة المرور</label
+          ><input
+            id="loginPassword"
+            type="password"
+            autocomplete="current-password"
+            required
+            maxlength="128"
+          />
+        </div>
+        <p id="loginError" class="error-text small" role="alert"></p>
+        <button class="primary-btn" type="submit" id="submitLogin">دخول</button>
+      </form>
+    </dialog>
+    <footer>
+      <a class="brand footer-brand" href="/" dir="ltr"
+        >Weta<span class="gold">Gold</span></a
+      ><span>إشاراتك، في مكان واحد.</span
+      ><span>© <span id="year"></span> WetaGold</span>
+    </footer>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </body>
 </html>

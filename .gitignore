@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.vercel/
+.env
+.env.*
+!.env.example
+data/
+*.sqlite*
+test-results/
+playwright-report/
+*.log
