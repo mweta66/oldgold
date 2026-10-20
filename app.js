@@ -113,10 +113,10 @@ function setSession(payload) {
   $("#expandChart").textContent = "تكبير";
   $("#expandChart").setAttribute("aria-expanded", "false");
   $("#landing").hidden = Boolean(user);
-  $("#memberPanel").hidden = !user;
+  $("#memberPanel").hidden = !user || user.mustChangePassword;
   $("#accountPanel").hidden = !user;
-  $("#adminPanel").hidden = user?.role !== "admin";
-  $("#adminNav").hidden = user?.role !== "admin";
+  $("#adminPanel").hidden = user?.role !== "admin" || user.mustChangePassword;
+  $("#adminNav").hidden = user?.role !== "admin" || user.mustChangePassword;
   $$(".member-only").forEach((node) => {
     node.hidden = !user;
   });
@@ -147,6 +147,7 @@ function setSession(payload) {
     message(id, "");
   $("#lastUpdate").textContent = "لم يتم التحديث";
   if (user) {
+    $("#passwordRequirement").hidden = !user.mustChangePassword;
     renderAccount();
     if (active()) loadChart();
   }
@@ -160,7 +161,11 @@ function renderAccount() {
     ? "كل الإشارات"
     : String(user.remaining);
   $("#expiryStat").textContent = admin ? "حساب المدير" : date(user.expiresAt);
-  $("#accountState").textContent = active() ? "مفعّل" : "منتهي / موقوف";
+  $("#accountState").textContent = user.mustChangePassword
+    ? "يلزم تغيير كلمة المرور"
+    : active()
+      ? "مفعّل"
+      : "منتهي / موقوف";
   $("#accountState").className = `badge ${active() ? "target" : "stopped"}`;
   $("#telegramStatus").textContent = user.telegramLinked
     ? "حسابك مربوط بـ Telegram."
@@ -497,7 +502,7 @@ async function refreshOnce() {
       clearSignals();
       $("#chartContainer").replaceChildren();
     }
-    if (user.role === "admin") {
+    if (user.role === "admin" && !user.mustChangePassword) {
       const result = await api("/api/admin/overview");
       if (version !== generation) return;
       overview = result;
