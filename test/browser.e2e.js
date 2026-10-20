@@ -214,3 +214,47 @@ test("desktop and mobile: real login, account CRUD, publication, member quota, c
   });
   assert.deepEqual(errors, []);
 });
+
+test("first administrator must replace a temporary password before accessing the admin interface", async (t) => {
+  const f = await fixture({ env: { ADMIN_PASSWORD: "Temp12" } });
+  t.after(() => f.app.close());
+  const browser = await chromium.launch({
+    executablePath:
+      process.env.CHROMIUM_PATH ||
+      (existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : undefined),
+    headless: true,
+    args: ["--no-sandbox"],
+  });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.route("https://www.tradingview.com/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>External provider boundary</title>",
+    }),
+  );
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill("Temp12");
+  await page.locator("#submitLogin").click();
+  await page.waitForSelector("#passwordRequirement", { state: "visible" });
+  assert.equal(await page.locator("#adminPanel").isVisible(), false);
+  assert.equal(await page.locator("#memberPanel").isVisible(), false);
+  assert.equal(
+    await page.evaluate(
+      async () => (await fetch("/api/admin/overview")).status,
+    ),
+    403,
+  );
+  await page.locator("#currentPassword").fill("Temp12");
+  await page.locator("#newPassword").fill("new-browser-admin-password");
+  await page.locator("#passwordForm button").click();
+  await page.waitForSelector("#loginDialog", { state: "visible" });
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill("new-browser-admin-password");
+  await page.locator("#submitLogin").click();
+  await page.waitForSelector("#adminPanel", { state: "visible" });
+  assert.equal(await page.locator("#passwordRequirement").isVisible(), false);
+});

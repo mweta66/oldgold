@@ -237,3 +237,52 @@ test("login attempts are rate-limited", async (t) => {
     assert.equal((await f.login("missing@example.test", "bad")).status, 401);
   assert.equal((await f.login("missing@example.test", "bad")).status, 429);
 });
+
+test("temporary first-admin passwords grant only password rotation until replaced with a strong password", async (t) => {
+  const f = await fixture({ env: { ADMIN_PASSWORD: "Temp12" } });
+  t.after(() => f.app.close());
+  const temporary = await f.login("admin@example.test", "Temp12");
+  assert.equal(temporary.status, 200);
+  assert.equal(temporary.body.user.mustChangePassword, true);
+  assert.equal(temporary.body.user.accessActive, false);
+  assert.equal(
+    (await f.request("/api/admin/overview", { auth: temporary })).status,
+    403,
+  );
+  assert.equal(
+    (await f.request("/api/signals", { auth: temporary })).status,
+    403,
+  );
+  assert.equal(
+    (
+      await f.request("/api/password", {
+        method: "POST",
+        auth: temporary,
+        data: {
+          currentPassword: "Temp12",
+          password: "replacement-admin-password",
+        },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await f.request("/api/admin/overview", { auth: temporary })).status,
+    401,
+  );
+  const updated = await f.login(
+    "admin@example.test",
+    "replacement-admin-password",
+  );
+  assert.equal(updated.body.user.mustChangePassword, false);
+  assert.equal(
+    (await f.request("/api/admin/overview", { auth: updated })).status,
+    200,
+  );
+  assert.equal(
+    f.app.db
+      .prepare("SELECT COUNT(*) AS count FROM users WHERE role='admin'")
+      .get().count,
+    1,
+  );
+});

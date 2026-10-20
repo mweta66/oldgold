@@ -58,16 +58,29 @@ export async function createApp(options = {}) {
     env.ADMIN_PASSWORD &&
     !db.prepare("SELECT id FROM users WHERE role='admin'").get()
   ) {
-    if (!emailValue(env.ADMIN_EMAIL) || !passwordValid(env.ADMIN_PASSWORD)) {
+    if (
+      !emailValue(env.ADMIN_EMAIL) ||
+      typeof env.ADMIN_PASSWORD !== "string" ||
+      env.ADMIN_PASSWORD.length < 6 ||
+      env.ADMIN_PASSWORD.length > 128
+    ) {
       db.close();
       throw new Error(
-        "Administrator email or password is invalid; use at least 12 characters.",
+        "Administrator email or temporary password is invalid; use 6–128 characters. Passwords shorter than 12 must be changed before administration.",
       );
     }
     const hash = await hashPassword(env.ADMIN_PASSWORD);
     db.prepare(
-      "INSERT INTO users(email,password_hash,role,created_at) VALUES(?,?,'admin',?)",
-    ).run(env.ADMIN_EMAIL.toLowerCase().trim(), hash, now());
+      "INSERT INTO users(email,password_hash,role,created_at,must_change_password) VALUES(?,?,'admin',?,?)",
+    ).run(
+      env.ADMIN_EMAIL.toLowerCase().trim(),
+      hash,
+      now(),
+      Number(
+        !passwordValid(env.ADMIN_PASSWORD) ||
+          env.ADMIN_REQUIRE_PASSWORD_CHANGE === "true",
+      ),
+    );
   }
   const dummyHash = await hashPassword(token());
   const telegram = createTelegram({
@@ -125,6 +138,11 @@ export async function createApp(options = {}) {
   const requireAdmin = (req) => {
     const auth = requireSession(req);
     if (auth.user.role !== "admin") throw error(403, "هذه العملية للمدير فقط.");
+    if (auth.user.must_change_password)
+      throw error(
+        403,
+        "غيّر كلمة المرور المؤقتة أولًا لتفعيل صلاحيات الإدارة.",
+      );
     return auth;
   };
   const requireActive = (user) => {
@@ -266,10 +284,9 @@ export async function createApp(options = {}) {
             .password_hash !== user.password_hash
         )
           throw error(409, "تغيرت كلمة المرور. سجّل الدخول مجددًا.");
-        db.prepare("UPDATE users SET password_hash=? WHERE id=?").run(
-          passwordHash,
-          user.id,
-        );
+        db.prepare(
+          "UPDATE users SET password_hash=?,must_change_password=0 WHERE id=?",
+        ).run(passwordHash, user.id);
         db.prepare("DELETE FROM sessions WHERE user_id=?").run(user.id);
       });
       res.setHeader("set-cookie", cookie(""));
