@@ -7,11 +7,12 @@
     "node": ">=24.10.0"
   },
   "scripts": {
+    "build:static": "node scripts/build-static.js",
     "start": "node --use-env-proxy --env-file-if-exists=.env server.js",
     "test": "node --test test/*.test.js",
     "test:browser": "node --test test/browser.e2e.js",
     "check": "node --check server.js && node --check app.js && node --check lib/store.js && node --check lib/telegram.js && node --check lib/backups.js",
-    "format:check": "prettier --check index.html styles.css app.js server.js lib test package.json manifest.webmanifest README.md docs .github"
+    "format:check": "prettier --check index.html styles.css app.js server.js lib test api scripts package.json manifest.webmanifest vercel.json README.md docs .github"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",
