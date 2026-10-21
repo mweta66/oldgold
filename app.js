@@ -7,6 +7,25 @@ let user = null,
   refreshTask = null,
   refreshAgain = false,
   generation = 0;
+let serviceReady = false,
+  serviceCheck = null;
+const THEMES = ["gold", "ocean", "emerald", "ivory"];
+function applyTheme(theme) {
+  if (!THEMES.includes(theme)) return;
+  const changed = document.documentElement.dataset.theme !== theme;
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]').content =
+    theme === "ivory" ? "#f5f2eb" : "#0b0e14";
+  if (changed && $("#chartContainer iframe")) loadChart();
+}
+async function syncAppearance() {
+  try {
+    const data = await api("/api/appearance");
+    applyTheme(data.theme);
+  } catch {
+    /* The default theme remains usable while the service is unavailable. */
+  }
+}
 let chartInterval = "1",
   toastTimer,
   draft = null;
@@ -68,19 +87,46 @@ async function api(path, { method = "GET", data } = {}) {
       ...(data === undefined ? {} : { body: JSON.stringify(data) }),
     });
   } catch {
-    throw new Error("تعذر الاتصال بالخادم. تحقق من الاتصال وحاول مجددًا.");
+    throw Object.assign(
+      new Error("تعذر الاتصال بالخادم. تحقق من الاتصال وحاول مجددًا."),
+      { code: "SERVICE_UNREACHABLE" },
+    );
   }
   let payload;
   try {
     payload = await response.json();
   } catch {
-    throw new Error("الخدمة غير متاحة. تأكد من تشغيل خادم WetaGold.");
+    throw Object.assign(
+      new Error("الخدمة غير متاحة. تواصل مع إدارة WetaGold."),
+      { code: "SERVICE_RESPONSE_INVALID", status: response.status },
+    );
   }
   if (!response.ok) {
     if (response.status === 401 && path !== "/api/login") setSession(null);
-    throw new Error(payload.error || "تعذر تنفيذ العملية.");
+    throw Object.assign(new Error(payload.error || "تعذر تنفيذ العملية."), {
+      status: response.status,
+      code: payload.code,
+    });
   }
   return payload;
+}
+
+const unavailable = (err) =>
+  err.status >= 500 ||
+  err.code?.startsWith("BACKEND_") ||
+  err.code?.startsWith("SERVICE_");
+function setServiceReady(ready) {
+  serviceReady = ready;
+  $("#loginButton").disabled = !ready;
+  $("#heroLogin").disabled = !ready;
+  $("#submitLogin").disabled = !ready;
+}
+function showServiceUnavailable(err) {
+  if ($("#loginDialog").open) $("#loginDialog").close();
+  setSession(null);
+  setServiceReady(false);
+  message("#serviceExplanation", err.message);
+  $("#serviceNotice").hidden = false;
 }
 
 function clearSignals() {
@@ -196,7 +242,8 @@ function loadChart() {
     interval: chartInterval,
     hidesidebar: "1",
     symboledit: "0",
-    theme: "dark",
+    theme:
+      document.documentElement.dataset.theme === "ivory" ? "light" : "dark",
     style: "1",
     timezone: "Etc/UTC",
   });
@@ -353,6 +400,10 @@ function editUser(account) {
 
 function renderAdmin() {
   if (!overview || user?.role !== "admin") return;
+  if (THEMES.includes(overview.theme)) {
+    $("#siteTheme").value = overview.theme;
+    applyTheme(overview.theme);
+  }
   $("#pauseButton").textContent = overview.paused
     ? "استئناف نشر الإشارات"
     : "إيقاف نشر الإشارات";
@@ -362,6 +413,7 @@ function renderAdmin() {
     : "Telegram غير مفعّل. أضف توكن البوت في إعدادات الخادم.";
   const deliveryNames = {
     pending: "بانتظار الإرسال",
+    processing: "جارٍ الإرسال",
     sent: "مرسلة",
     failed: "تعذر إرسالها",
     cancelled: "ملغاة",
@@ -377,10 +429,12 @@ function renderAdmin() {
     !overview.telegram.configured ||
     !overview.telegram.deliveries.some((row) => row.state === "failed");
   $("#backupStatus").textContent =
-    overview.backups?.error ||
-    (overview.backups?.lastBackupAt
-      ? `آخر فحص للنسخة اليومية: ${date(overview.backups.lastBackupAt)}`
-      : "النسخ الاحتياطي غير متاح في بيئة الاختبار.");
+    overview.storage === "supabase"
+      ? "البيانات محفوظة في Supabase. إدارة النسخ الاحتياطية والاستعادة تتم من لوحة مشروعك حسب الخطة المستخدمة."
+      : overview.backups?.error ||
+        (overview.backups?.lastBackupAt
+          ? `آخر فحص للنسخة اليومية: ${date(overview.backups.lastBackupAt)}`
+          : "النسخ الاحتياطي غير متاح في بيئة الاختبار.");
   const table = element("table"),
     head = element("thead"),
     row = element("tr"),
@@ -431,6 +485,7 @@ function renderAdmin() {
     "user.create": "إنشاء حساب",
     "user.update": "تعديل حساب",
     "signals.pause": "تغيير حالة النشر",
+    "settings.update": "تغيير إعدادات الموقع",
     "signal.publish": "نشر إشارة",
     "signal.open": "فتح إشارة",
     "signal.target": "تسجيل الهدف",
@@ -513,7 +568,8 @@ async function refreshOnce() {
   } catch (err) {
     if (version === generation || !user) {
       clearSignals();
-      message("#globalError", err.message);
+      if (unavailable(err)) showServiceUnavailable(err);
+      else message("#globalError", err.message);
     }
   } finally {
     $("#refreshButton").disabled = false;
@@ -521,6 +577,7 @@ async function refreshOnce() {
 }
 
 function openLogin() {
+  if (!serviceReady) return;
   message("#loginError", "");
   $("#loginDialog").showModal();
 }
@@ -543,9 +600,10 @@ $("#loginForm").addEventListener("submit", async (event) => {
     $("#loginDialog").close();
     await refresh();
   } catch (err) {
-    message("#loginError", err.message);
+    if (unavailable(err)) showServiceUnavailable(err);
+    else message("#loginError", err.message);
   } finally {
-    $("#submitLogin").disabled = false;
+    $("#submitLogin").disabled = !serviceReady;
   }
 });
 $("#logoutButton").addEventListener("click", async () => {
@@ -738,18 +796,63 @@ $("#retryTelegram").addEventListener("click", async () => {
   }
 });
 $("#year").textContent = new Date().getFullYear();
-async function init() {
+$("#themeForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  $("#saveTheme").disabled = true;
   try {
+    await api("/api/admin/settings", {
+      method: "PATCH",
+      data: { theme: $("#siteTheme").value },
+    });
+    applyTheme($("#siteTheme").value);
+    message("#themeMessage", "تم حفظ الثيم للموقع كله.");
+    await refresh();
+  } catch (err) {
+    message("#themeMessage", err.message);
+  } finally {
+    $("#saveTheme").disabled = false;
+  }
+});
+async function checkService() {
+  setServiceReady(false);
+  $("#retryService").disabled = true;
+  try {
+    const health = await api("/api/health");
+    if (health.ok !== true)
+      throw Object.assign(
+        new Error("خدمة الحسابات غير جاهزة حاليًا. تواصل مع الإدارة."),
+        { code: "SERVICE_RESPONSE_INVALID" },
+      );
     const result = await api("/api/me");
+    if (!Object.hasOwn(result, "user"))
+      throw Object.assign(
+        new Error("رد خدمة الحسابات غير صالح. تواصل مع الإدارة."),
+        { code: "SERVICE_RESPONSE_INVALID" },
+      );
     setSession(result);
+    setServiceReady(true);
+    $("#serviceNotice").hidden = true;
     if (user) await refresh();
     else if (["/members", "/admin"].includes(location.pathname)) openLogin();
   } catch (err) {
-    setSession(null);
-    message("#globalError", err.message);
+    showServiceUnavailable(err);
+  } finally {
+    $("#retryService").disabled = false;
   }
 }
+function init() {
+  if (serviceCheck) return serviceCheck;
+  serviceCheck = checkService().finally(() => {
+    serviceCheck = null;
+  });
+  return serviceCheck;
+}
+$("#retryService").addEventListener("click", init);
 void init();
+void syncAppearance();
+setInterval(() => {
+  if (!document.hidden) void syncAppearance();
+}, 30000);
 setInterval(() => {
   if (user && !document.hidden && !$("#loginDialog").open) void refresh();
 }, 15000);

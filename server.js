@@ -16,6 +16,8 @@ import {
 } from "./lib/store.js";
 import { createTelegram, signalMessage } from "./lib/telegram.js";
 import { createBackups } from "./lib/backups.js";
+import { createCloudApp } from "./lib/cloud-server.js";
+import { validTheme } from "./lib/themes.js";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const SESSION_DURATION = 12 * 60 * 60 * 1000;
@@ -34,6 +36,8 @@ const timestamp = (value) =>
 
 export async function createApp(options = {}) {
   const env = options.env || process.env;
+  if (env.SUPABASE_URL || env.STORAGE_PROVIDER === "supabase")
+    return createCloudApp(env, { fetchImpl: options.fetchImpl });
   const now = options.now || Date.now;
   const databasePath =
     options.databasePath ||
@@ -208,6 +212,12 @@ export async function createApp(options = {}) {
       res.end(JSON.stringify(payload));
     };
     if (method === "GET" && path === "/api/health") return send({ ok: true });
+    if (method === "GET" && path === "/api/appearance")
+      return send({
+        theme:
+          db.prepare("SELECT value FROM settings WHERE key='theme'").get()
+            ?.value || "gold",
+      });
     if (method === "GET" && path === "/api/me") {
       const auth = getSession(req);
       return send(
@@ -373,6 +383,9 @@ export async function createApp(options = {}) {
             .all(),
         },
         backups: backups?.status || null,
+        theme:
+          db.prepare("SELECT value FROM settings WHERE key='theme'").get()
+            ?.value || "gold",
         paused:
           db.prepare("SELECT value FROM settings WHERE key='paused'").get()
             ?.value === "true",
@@ -400,13 +413,22 @@ export async function createApp(options = {}) {
     }
     if (method === "PATCH" && path === "/api/admin/settings") {
       const data = await bodyOf(req);
-      if (typeof data.paused !== "boolean")
+      if (
+        (data.paused !== undefined && typeof data.paused !== "boolean") ||
+        (data.theme !== undefined && !validTheme(data.theme)) ||
+        (data.paused === undefined && data.theme === undefined)
+      )
         throw error(400, "قيمة الإيقاف غير صحيحة.");
       transaction(db, () => {
-        db.prepare(
-          "INSERT INTO settings(key,value) VALUES('paused',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        ).run(String(data.paused));
-        audit(admin, "signals.pause", String(data.paused));
+        if (data.paused !== undefined)
+          db.prepare(
+            "INSERT INTO settings(key,value) VALUES('paused',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          ).run(String(data.paused));
+        if (data.theme !== undefined)
+          db.prepare(
+            "INSERT INTO settings(key,value) VALUES('theme',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          ).run(data.theme);
+        audit(admin, "settings.update", JSON.stringify(data));
       });
       return send({ ok: true });
     }
@@ -618,6 +640,15 @@ export async function createApp(options = {}) {
     ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
     ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
     ["/icon.svg", ["icon.svg", "image/svg+xml"]],
+    ["/assets/wetagold-mark.png", ["assets/wetagold-mark.png", "image/png"]],
+    [
+      "/assets/fonts/cairo-arabic.woff2",
+      ["assets/fonts/cairo-arabic.woff2", "font/woff2"],
+    ],
+    [
+      "/assets/fonts/cairo-latin.woff2",
+      ["assets/fonts/cairo-latin.woff2", "font/woff2"],
+    ],
     [
       "/manifest.webmanifest",
       ["manifest.webmanifest", "application/manifest+json"],
@@ -633,7 +664,7 @@ export async function createApp(options = {}) {
     );
     res.setHeader(
       "content-security-policy",
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; frame-src https://www.tradingview.com; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'self'; manifest-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; frame-src https://www.tradingview.com; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     );
     res.setHeader("cache-control", "no-store");
     if (secure) res.setHeader("strict-transport-security", "max-age=31536000");

@@ -16,7 +16,7 @@
         { "key": "Cache-Control", "value": "no-store" },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; frame-src https://www.tradingview.com; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+          "value": "default-src 'self'; manifest-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; frame-src https://www.tradingview.com; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
         }
       ]
     }
