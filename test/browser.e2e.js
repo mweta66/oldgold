@@ -124,6 +124,12 @@ test("Cairo, real logo/watermark and all four administrator-controlled themes wo
     () => document.documentElement.dataset.theme === "ivory",
   );
   await page.waitForSelector("#adminPanel", { state: "visible" });
+  await page.locator("#checkTelegramGroup").click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#groupCheckMessage")
+      .textContent.includes("غير مربوط"),
+  );
   assert.match(await page.locator("iframe").getAttribute("src"), /theme=light/);
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(

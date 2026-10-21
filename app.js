@@ -96,7 +96,12 @@ async function api(path, { method = "GET", data } = {}) {
       method,
       credentials: "same-origin",
       cache: "no-store",
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(
+        path.startsWith("/api/admin/signals") ||
+          path === "/api/admin/telegram/group-check"
+          ? 30000
+          : 15000,
+      ),
       headers: {
         ...(data === undefined ? {} : { "content-type": "application/json" }),
         ...(method === "GET" ? {} : { "x-csrf-token": csrf }),
@@ -176,6 +181,7 @@ function setSession(payload) {
   themeDirty = false;
   themeSaving = false;
   $("#saveTheme").disabled = false;
+  $("#checkTelegramGroup").disabled = false;
   user = payload?.user || null;
   csrf = payload?.csrf || "";
   clearSignals();
@@ -225,6 +231,7 @@ function setSession(payload) {
     "#passwordMessage",
     "#telegramMessage",
     "#botCheckMessage",
+    "#groupCheckMessage",
   ])
     message(id, "");
   $("#lastUpdate").textContent = "لم يتم التحديث";
@@ -570,7 +577,7 @@ function renderAdmin() {
     : "إيقاف نشر الإشارات";
   $("#publishButton").disabled = overview.paused;
   $("#adminTelegramStatus").textContent = overview.telegram.configured
-    ? `التوكن مضاف على الخادم. جروب الإدارة: ${overview.telegram.adminGroupConfigured ? "مضبوط" : "غير مضبوط"}.`
+    ? `التوكن مضاف على الخادم. جروب الإشارات الخاص: ${overview.telegram.groupConfigured ? "رقمه مضاف؛ افحص الخصوصية والصلاحيات" : "غير مربوط"}. إدارة العضوية يدوية عندك فقط.`
     : "Telegram غير مفعّل. أضف توكن البوت في إعدادات الخادم.";
   const deliveryNames = {
     pending: "بانتظار الإرسال",
@@ -985,6 +992,25 @@ $("#retryTelegram").addEventListener("click", async () => {
     await refresh();
   } catch (err) {
     message("#botCheckMessage", err.message);
+  }
+});
+$("#checkTelegramGroup").addEventListener("click", async () => {
+  const version = generation;
+  $("#checkTelegramGroup").disabled = true;
+  try {
+    const { group } = await api("/api/admin/telegram/group-check", {
+      method: "POST",
+      data: {},
+    });
+    if (version !== generation) return;
+    message(
+      "#groupCheckMessage",
+      `${group.ready ? "✓ " : ""}${group.title ? group.title + " · " : ""}${group.message}`,
+    );
+  } catch (err) {
+    if (version === generation) message("#groupCheckMessage", err.message);
+  } finally {
+    if (version === generation) $("#checkTelegramGroup").disabled = false;
   }
 });
 $("#year").textContent = new Date().getFullYear();

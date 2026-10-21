@@ -335,6 +335,8 @@
             >
             <p class="small muted">
               الإشارات الجديدة المخصصة لحسابك توصلك في رسالة خاصة بعد الربط.
+              الجروب المغلق تضيفك إليه الإدارة بنفسها؛ رابط البوت مش رابط دخول
+              للجروب.
             </p>
             <p id="telegramMessage" role="status" class="small"></p>
           </div>
@@ -548,10 +550,16 @@
         </article>
         <article class="panel telegram-panel">
           <div class="panel-head">
-            <h3>ربط Telegram وإرسال الإشارات</h3>
+            <h3>جروب الإشارات المغلق وTelegram</h3>
             <div class="button-row">
               <button class="secondary-btn" type="button" id="checkTelegram">
                 فحص اتصال البوت</button
+              ><button
+                class="secondary-btn"
+                type="button"
+                id="checkTelegramGroup"
+              >
+                فحص خصوصية الجروب</button
               ><button class="secondary-btn" type="button" id="retryTelegram">
                 إعادة محاولة الرسائل الفاشلة
               </button>
@@ -560,6 +568,12 @@
           <p id="adminTelegramStatus" class="muted"></p>
           <p id="deliveryStatus" class="small muted"></p>
           <p id="botCheckMessage" class="small" role="status"></p>
+          <p id="groupCheckMessage" class="small" role="status"></p>
+          <p class="message">
+            أنت وحدك تضيف وتخرج أعضاء الجروب من Telegram. الجروب يستقبل كل إشارة
+            جديدة وكل تحديث مسجّل، بما فيه TP وSL. حصص الموقع وانتهاء التفعيل لا
+            تمنع رؤية رسائل الجروب ولا تخرج المشترك منه تلقائيًا.
+          </p>
           <details>
             <summary>خطوات تفعيل الربط</summary>
             <ol>
@@ -572,14 +586,22 @@
                 تحترم حصة الإشارات ومدة التفعيل.
               </li>
               <li>
-                اختياريًا: أضف البوت إلى جروب الإدارة بصلاحية إرسال، واضبط
-                <code>TELEGRAM_ADMIN_CHAT_ID</code>. الجروب يستقبل كل الإشارات
-                للإدارة فقط.
+                أنشئ جروبًا خاصًا بدون اسم مستخدم عام، واقفل صلاحية إضافة
+                الأعضاء للجميع. أنت مالك الجروب، والمشرف الآخر الوحيد هو البوت
+                للإرسال بدون دعوة أو حظر أعضاء أو ترقية مشرفين. ألغِ روابط
+                الدعوة القديمة ولا تنشر رابطًا يسمح بدخول مباشر.
+              </li>
+              <li>
+                اربط حساب المدير بـ Telegram ثم أضف رقم الجروب في إعدادات الخادم
+                باسم <code>TELEGRAM_GROUP_CHAT_ID</code> وافحص خصوصيته. لا ينشر
+                الموقع روابط دعوة ولا يضيف أو يحذف أعضاء.
               </li>
             </ol>
             <p class="small muted">
               في وضع Supabase يُستخدم Webhook آمن لاستقبال الربط، وإرسال تلقائي
               مع طابور للمحاولات التالية. التوكن لا يُدخل في الموقع أو المستودع.
+              الإرسال تلقائي عند تسجيل التحديث على الموقع؛ رصد TP/SL من السوق
+              ليس مفعّلًا بدون مزود أسعار مباشر.
             </p>
           </details>
         </article>

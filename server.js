@@ -14,7 +14,9 @@ import {
   hashPassword,
   verifyPassword,
 } from "./lib/store.js";
-import { createTelegram, signalMessage } from "./lib/telegram.js";
+import { createTelegram } from "./lib/telegram.js";
+import { recordSignalEvent, expireSignals } from "./lib/telegram-events.js";
+import { groupChatId } from "./lib/telegram-group.js";
 import { createBackups } from "./lib/backups.js";
 import { createCloudApp } from "./lib/cloud-server.js";
 import { validTheme } from "./lib/themes.js";
@@ -93,6 +95,7 @@ export async function createApp(options = {}) {
     botToken: env.TELEGRAM_BOT_TOKEN,
     fetchImpl: options.fetchImpl,
     now,
+    groupId: groupChatId(env),
   });
   const backups =
     databasePath === ":memory:"
@@ -308,9 +311,7 @@ export async function createApp(options = {}) {
     if (method === "GET" && path === "/api/signals") {
       const { user } = requireSession(req);
       requireActive(user);
-      db.prepare(
-        "UPDATE signals SET status='expired',closed_at=expires_at WHERE status='pending' AND expires_at<=?",
-      ).run(now());
+      expireSignals(db, now());
       const cutoff = now() - 90 * 86400000;
       const rows =
         user.role === "admin"
@@ -341,9 +342,7 @@ export async function createApp(options = {}) {
       const { user } = requireSession(req);
       requireActive(user);
       const query = historyQuery(url.searchParams);
-      db.prepare(
-        "UPDATE signals SET status='expired',closed_at=expires_at WHERE status='pending' AND expires_at<=?",
-      ).run(now());
+      expireSignals(db, now());
       const conditions = [],
         args = [];
       if (user.role !== "admin") {
@@ -430,7 +429,8 @@ export async function createApp(options = {}) {
           .map((account) => publicUser(account, now())),
         telegram: {
           configured: telegram.configured,
-          adminGroupConfigured: Boolean(env.TELEGRAM_ADMIN_CHAT_ID),
+          adminGroupConfigured: Boolean(groupChatId(env)),
+          groupConfigured: Boolean(groupChatId(env)),
           ...telegram.status,
           deliveries: db
             .prepare(
@@ -457,6 +457,13 @@ export async function createApp(options = {}) {
         return send({ bot: await telegram.botInfo() });
       } catch {
         throw error(502, "البوت غير متصل. تحقق من التوكن والاتصال بالشبكة.");
+      }
+    }
+    if (method === "POST" && path === "/api/admin/telegram/group-check") {
+      try {
+        return send({ group: await telegram.groupInfo() });
+      } catch {
+        throw error(502, "تعذر فحص الجروب. راجع إعدادات البوت وخصوصية الجروب.");
       }
     }
     if (method === "POST" && path === "/api/admin/telegram/retry") {
@@ -602,9 +609,7 @@ export async function createApp(options = {}) {
           .prepare("SELECT id FROM signals WHERE request_id=?")
           .get(data.requestId);
         if (duplicate) return { id: duplicate.id, duplicate: true };
-        db.prepare(
-          "UPDATE signals SET status='expired',closed_at=expires_at WHERE status='pending' AND expires_at<=?",
-        ).run(now());
+        expireSignals(db, now());
         if (
           db
             .prepare(
@@ -633,8 +638,9 @@ export async function createApp(options = {}) {
             admin.id,
           );
         const id = Number(result.lastInsertRowid);
-        const signal = db.prepare("SELECT * FROM signals WHERE id=?").get(id);
-        const message = signalMessage(signal);
+        db.prepare(
+          "UPDATE signals SET telegram_group_chat_id=? WHERE id=?",
+        ).run(telegram.configured ? groupChatId(env) : null, id);
         const subscribers = db
           .prepare(
             "SELECT * FROM users WHERE role='member' AND active=1 AND expires_at>? AND used<quota",
@@ -647,15 +653,13 @@ export async function createApp(options = {}) {
           db.prepare("UPDATE users SET used=used+1 WHERE id=?").run(
             recipient.id,
           );
-          if (telegram.configured && recipient.telegram_chat_id)
-            db.prepare(
-              "INSERT INTO outbox(signal_id,user_id,destination,message,next_at) VALUES(?,?,?,?,?)",
-            ).run(id, recipient.id, recipient.telegram_chat_id, message, now());
         }
-        if (telegram.configured && env.TELEGRAM_ADMIN_CHAT_ID)
-          db.prepare(
-            "INSERT OR IGNORE INTO outbox(signal_id,destination,message,next_at) VALUES(?,?,?,?)",
-          ).run(id, env.TELEGRAM_ADMIN_CHAT_ID, message, now());
+        recordSignalEvent(
+          db,
+          db.prepare("SELECT * FROM signals WHERE id=?").get(id),
+          "publish",
+          now(),
+        );
         audit(admin, "signal.publish", id);
         return { id, recipients: subscribers.length };
       });
@@ -671,9 +675,7 @@ export async function createApp(options = {}) {
         open: ["target", "stopped", "cancelled"],
       };
       transaction(db, () => {
-        db.prepare(
-          "UPDATE signals SET status='expired',closed_at=expires_at WHERE status='pending' AND expires_at<=?",
-        ).run(now());
+        expireSignals(db, now());
         const signal = db.prepare("SELECT * FROM signals WHERE id=?").get(id);
         if (!signal) throw error(404, "الإشارة غير موجودة.");
         if (!transitions[signal.status]?.includes(data.status))
@@ -681,8 +683,18 @@ export async function createApp(options = {}) {
         db.prepare(
           "UPDATE signals SET status=?,opened_at=CASE WHEN ?='open' THEN coalesce(opened_at,?) ELSE opened_at END,closed_at=CASE WHEN ? IN ('target','stopped','expired','cancelled') THEN ? ELSE closed_at END WHERE id=?",
         ).run(data.status, data.status, now(), data.status, now(), id);
+        db.prepare(
+          "UPDATE signals SET telegram_group_chat_id=? WHERE id=?",
+        ).run(telegram.configured ? groupChatId(env) : null, id);
+        recordSignalEvent(
+          db,
+          db.prepare("SELECT * FROM signals WHERE id=?").get(id),
+          "status",
+          now(),
+        );
         audit(admin, `signal.${data.status}`, id);
       });
+      void telegram.flush();
       return send({ ok: true });
     }
     throw error(404, "المسار غير موجود.");

@@ -40,12 +40,14 @@ async function fixture(t, overrides = {}) {
     wg_signals: [],
     wg_allocations: [],
     wg_outbox: [],
+    wg_signal_events: [],
     wg_audit: [],
     wg_settings: [{ id: 1, theme: "gold", paused: false }],
     wg_telegram_links: [],
   };
   const calls = [],
     sent = [];
+  const telegramPolicy = { public: false };
   let unavailable = false,
     authUnavailable = false;
   const matches = (row, url) =>
@@ -70,7 +72,37 @@ async function fixture(t, overrides = {}) {
     calls.push({ path: url.pathname, method, data, headers });
     if (url.hostname === "api.telegram.org") {
       if (url.pathname.endsWith("sendMessage")) sent.push(data);
-      return json({ ok: true, result: { username: "test_wetagold_bot" } });
+      const method = url.pathname.split("/").pop();
+      if (method === "getChat")
+        return json({
+          ok: true,
+          result: {
+            id: Number(data.chat_id),
+            type: "supergroup",
+            title: "Private signals",
+            permissions: { can_invite_users: false },
+            ...(telegramPolicy.public ? { username: "public-group" } : {}),
+          },
+        });
+      if (method === "getChatAdministrators")
+        return json({
+          ok: true,
+          result: [{ status: "creator", user: { id: 999 } }],
+        });
+      if (method === "getChatMember")
+        return json({
+          ok: true,
+          result: {
+            status: "administrator",
+            user: { id: 77 },
+            can_invite_users: false,
+            can_restrict_members: false,
+          },
+        });
+      return json({
+        ok: true,
+        result: { id: 77, username: "test_wetagold_bot" },
+      });
     }
     assert.equal(url.origin, env.SUPABASE_URL);
     if (url.pathname === "/auth/v1/token") {
@@ -254,6 +286,7 @@ async function fixture(t, overrides = {}) {
     tables,
     calls,
     sent,
+    telegramPolicy,
     request,
     login,
     failDatabase: () => {
@@ -547,6 +580,136 @@ test("Supabase account provisioning uses Auth Admin API and never accepts a subm
   );
 });
 
+test("Supabase status updates automatically send TP to the verified private group even after entry expiry", async (t) => {
+  const f = await fixture(t, { TELEGRAM_GROUP_CHAT_ID: "-1001" }),
+    admin = await f.login(),
+    member = await f.login("member@example.test");
+  f.tables.wg_profiles[0].telegram_chat_id = "999";
+  assert.equal(
+    (
+      await f.request("/api/admin/telegram/group-check", {
+        method: "POST",
+        auth: member,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await f.request("/api/admin/telegram/group-check", {
+        method: "POST",
+        auth: admin,
+      })
+    ).body.group.ready,
+    true,
+  );
+  const signal = {
+    id: 1,
+    direction: "buy",
+    entry: 100,
+    stop: 99,
+    target: 101.5,
+    status: "target",
+    expires_at: new Date(Date.now() - 3600000).toISOString(),
+  };
+  f.tables.wg_signals.push(signal);
+  f.tables.wg_signal_events.push({
+    id: 1,
+    kind: "status",
+    created_at: new Date().toISOString(),
+    delivery_until: new Date(Date.now() + 86400000).toISOString(),
+    snapshot: signal,
+  });
+  f.tables.wg_outbox.push({
+    id: 1,
+    signal_id: 1,
+    event_id: 1,
+    user_id: null,
+    destination: "-1001",
+    state: "pending",
+    attempts: 0,
+  });
+  assert.equal(
+    (
+      await f.request("/api/admin/signals/1", {
+        method: "PATCH",
+        auth: admin,
+        data: { status: "target" },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent[0].chat_id, "-1001");
+  assert.match(f.sent[0].text, /تحقق الهدف TP/);
+  assert.equal(
+    f.calls.find((c) => c.path.endsWith("/wg_signal_status")).data.p_group_chat,
+    "-1001",
+  );
+  assert.equal(f.tables.wg_outbox[0].state, "sent");
+  assert.ok(
+    !f.calls.some((c) =>
+      /banChatMember|unbanChatMember|approveChatJoinRequest|createChatInviteLink/.test(
+        c.path,
+      ),
+    ),
+  );
+});
+
+test("a group becoming public is blocked without blocking entitled private notifications", async (t) => {
+  const f = await fixture(t, { TELEGRAM_GROUP_CHAT_ID: "-1001" });
+  f.tables.wg_profiles[0].telegram_chat_id = "999";
+  f.telegramPolicy.public = true;
+  const snapshot = {
+    id: 1,
+    direction: "buy",
+    entry: 100,
+    stop: 99,
+    target: 101.5,
+    status: "stopped",
+    expires_at: new Date(Date.now() - 60000).toISOString(),
+  };
+  f.tables.wg_signals.push(snapshot);
+  f.tables.wg_signal_events.push({
+    id: 1,
+    kind: "status",
+    created_at: new Date().toISOString(),
+    delivery_until: new Date(Date.now() + 86400000).toISOString(),
+    snapshot,
+  });
+  f.tables.wg_outbox.push(
+    {
+      id: 1,
+      signal_id: 1,
+      event_id: 1,
+      user_id: null,
+      destination: "-1001",
+      state: "pending",
+      attempts: 0,
+    },
+    {
+      id: 2,
+      signal_id: 1,
+      event_id: 1,
+      user_id: MEMBER,
+      destination: "1001",
+      state: "pending",
+      attempts: 0,
+    },
+  );
+  const r = await f.request("/api/jobs/telegram", {
+    headers: { authorization: `Bearer ${f.env.CRON_SECRET}` },
+  });
+  assert.equal(r.status, 200);
+  assert.deepEqual(
+    f.sent.map((s) => s.chat_id),
+    ["1001"],
+  );
+  assert.match(f.sent[0].text, /وقف الخسارة SL/);
+  assert.equal(f.tables.wg_outbox[0].state, "pending");
+  assert.equal(f.tables.wg_outbox[0].attempts, 1);
+});
+
 test("Supabase Telegram webhook/job are secret-protected and publishing sends the durable outbox immediately", async (t) => {
   const f = await fixture(t),
     admin = await f.login();
@@ -583,11 +746,19 @@ test("Supabase Telegram webhook/job are secret-protected and publishing sends th
   });
   f.tables.wg_outbox.push({
     id: 1,
+    event_id: 1,
     signal_id: 1,
     user_id: MEMBER,
     destination: "1001",
     state: "pending",
     attempts: 0,
+  });
+  f.tables.wg_signal_events.push({
+    id: 1,
+    kind: "publish",
+    created_at: new Date().toISOString(),
+    delivery_until: new Date(Date.now() + 60000).toISOString(),
+    snapshot: f.tables.wg_signals[0],
   });
   assert.equal(
     (

@@ -37,6 +37,34 @@ test("Supabase migration and RPCs execute on PostgreSQL, not an in-memory applic
       "utf8",
     ),
   );
+  await db.query("insert into auth.users values($1)", [admin]);
+  await db.query(
+    "insert into wg_profiles(id,email,role) values($1,'migration@example.test','admin')",
+    [admin],
+  );
+  await db.query("select wg_publish($1,$2::jsonb,'-100')", [
+    admin,
+    JSON.stringify(signal()),
+  ]);
+  await db.exec("update wg_outbox set state='failed',attempts=2");
+  await db.exec(
+    await readFile(
+      new URL(
+        "../supabase/migrations/003_telegram_events.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const migrated = (
+    await db.query(
+      "select o.event_id,o.state,o.attempts,e.kind from wg_outbox o join wg_signal_events e on e.id=o.event_id",
+    )
+  ).rows;
+  assert.equal(migrated.length, 1);
+  assert.equal(migrated[0].state, "failed");
+  assert.equal(migrated[0].attempts, 2);
+  assert.equal(migrated[0].kind, "publish");
   const rpc = async (name, args, casts) =>
     (
       await db.query(
@@ -333,6 +361,18 @@ test("Supabase migration and RPCs execute on PostgreSQL, not an in-memory applic
       ).rows[0];
       assert.ok(row.opened_at);
       assert.equal(row.closed_at, null);
+      await db.query(
+        "update wg_signals set created_at=now()-interval '150 days' where id=$1",
+        [published.id],
+      );
+      assert.ok(
+        (await db.query("select * from wg_get_signals($1)", [admin])).rows.some(
+          (s) => Number(s.id) === published.id,
+        ),
+      );
+      await db.query("update wg_signals set created_at=now() where id=$1", [
+        published.id,
+      ]);
       await rpc("wg_signal_status", [admin, published.id, "target"]);
       row = (
         await db.query("select * from wg_signals where id=$1", [published.id])
@@ -343,15 +383,71 @@ test("Supabase migration and RPCs execute on PostgreSQL, not an in-memory applic
       const filtered = await history(1, "target", today, tomorrow, admin);
       assert.equal(filtered.signals.length, 1);
       assert.equal(filtered.signals[0].id, published.id);
+    },
+  );
+
+  await t.test(
+    "Telegram events preserve TP after entry expiry, are ordered per chat, isolated, durable and never double-charge",
+    async () => {
+      await seed();
+      const data = signal(),
+        p = await publish(data);
+      await rpc("wg_signal_status", [admin, p.id, "open", "-100"]);
       await db.query(
-        "update wg_signals set status='open',created_at=now()-interval '150 days' where id=$1",
-        [published.id],
+        "update wg_signals set expires_at=now()-interval '20 minutes' where id=$1",
+        [p.id],
       );
+      await rpc("wg_signal_status", [admin, p.id, "target", "-100"]);
+      await assert.rejects(
+        rpc("wg_signal_status", [admin, p.id, "target", "-100"]),
+        /WG:/,
+      );
+      assert.equal((await publish(data)).duplicate, true);
+      const events = (
+        await db.query("select * from wg_signal_events order by id")
+      ).rows;
+      assert.deepEqual(
+        events.map((e) => e.status),
+        ["pending", "open", "target"],
+      );
+      assert.equal(events[2].snapshot.status, "target");
+      assert.equal(
+        (await db.query("select count(*)::int n from wg_outbox")).rows[0].n,
+        6,
+      );
+      const claimed = (await db.query("select * from wg_claim_delivery(20)"))
+        .rows;
+      assert.equal(claimed.length, 2);
       assert.ok(
-        (await db.query("select * from wg_get_signals($1)", [admin])).rows.some(
-          (s) => Number(s.id) === published.id,
-        ),
+        claimed.every((r) => Number(r.event_id) === Number(events[1].id)),
       );
+      assert.equal(
+        (await db.query("select * from wg_claim_delivery(20)")).rows.length,
+        0,
+      );
+      await db.exec(
+        "update wg_outbox set state='sent' where state='processing'",
+      );
+      const terminal = (await db.query("select * from wg_claim_delivery(20)"))
+        .rows;
+      assert.equal(terminal.length, 2);
+      assert.ok(
+        terminal.every((r) => Number(r.event_id) === Number(events[2].id)),
+      );
+      assert.equal(
+        (await db.query("select used from wg_profiles where id=$1", [member]))
+          .rows[0].used,
+        1,
+      );
+      await db.exec("set role authenticated");
+      try {
+        await assert.rejects(
+          db.query("select * from wg_signal_events"),
+          /permission denied/,
+        );
+      } finally {
+        await db.exec("reset role");
+      }
     },
   );
 
@@ -417,6 +513,11 @@ test("Supabase migration and RPCs execute on PostgreSQL, not an in-memory applic
         (await db.query("select * from wg_claim_delivery(1)")).rows;
       const first = (await claim())[0],
         second = (await claim())[0];
+      assert.equal(
+        first.user_id,
+        null,
+        "group notification must not wait behind subscriber batches",
+      );
       assert.notEqual(first.id, second.id);
       assert.deepEqual(await claim(), []);
       await db.query(
@@ -459,7 +560,16 @@ test("Supabase migration and RPCs execute on PostgreSQL, not an in-memory applic
       await db.exec(
         "update wg_signals set expires_at=now()-interval '1 minute'; update wg_outbox set next_at=now()-interval '1 second';",
       );
-      assert.deepEqual(await claim(), []);
+      const ended = await claim();
+      assert.equal(ended.length, 1);
+      assert.equal(
+        (
+          await db.query("select status from wg_signal_events where id=$1", [
+            ended[0].event_id,
+          ])
+        ).rows[0].status,
+        "expired",
+      );
       assert.equal(
         (
           await db.query(
