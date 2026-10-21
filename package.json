@@ -13,7 +13,7 @@
     "telegram:webhook": "node --use-env-proxy --env-file-if-exists=.env scripts/telegram-webhook.js",
     "test": "node --test test/*.test.js",
     "test:browser": "node --test test/browser.e2e.js",
-    "check": "node --check server.js && node --check app.js && node --check time-zones.js && node --check lib/country-time-zones.js && node --check lib/store.js && node --check lib/telegram.js && node --check lib/backups.js && node --check lib/supabase.js && node --check lib/cloud-server.js && node --check scripts/bootstrap-supabase.js && node --check scripts/telegram-webhook.js",
+    "check": "node scripts/check-js.js",
     "format:check": "prettier --check index.html styles.css app.js time-zones.js server.js lib test api scripts package.json manifest.webmanifest vercel.json README.md docs .github"
   },
   "devDependencies": {

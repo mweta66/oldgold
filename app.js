@@ -27,7 +27,23 @@ let historyData = null,
   historyBusy = false;
 let historyFilters = { status: "all", direction: "all", from: "", to: "" };
 let themeDirty = false,
-  themeSaving = false;
+  themeSaving = false,
+  publishing = false,
+  savingUser = false;
+const formLocks = new Map();
+function lockForm(selector) {
+  const controls = [...$(selector).elements].map((node) => [
+    node,
+    node.disabled,
+  ]);
+  formLocks.set(selector, controls);
+  for (const [node] of controls) node.disabled = true;
+}
+function unlockForm(selector) {
+  for (const [node, disabled] of formLocks.get(selector) || [])
+    node.disabled = disabled;
+  formLocks.delete(selector);
+}
 function applyHistoryFilters() {
   historyFilters = {
     status: $("#historyFilter").value,
@@ -244,6 +260,22 @@ async function api(path, { method = "GET", data } = {}) {
   let payload;
   try {
     payload = await response.json();
+    if (!payload || typeof payload !== "object" || Array.isArray(payload))
+      throw new Error("Invalid API envelope");
+    if (response.ok && ["/api/me", "/api/login"].includes(path)) {
+      const account = payload.user;
+      if (
+        !Object.hasOwn(payload, "user") ||
+        (account === null
+          ? path === "/api/login"
+          : !account ||
+            !["admin", "member"].includes(account.role) ||
+            typeof account.accessActive !== "boolean" ||
+            typeof payload.csrf !== "string" ||
+            !payload.csrf)
+      )
+        throw new Error("Invalid session envelope");
+    }
   } catch {
     const resource =
       {
@@ -330,6 +362,23 @@ function clearSignals() {
 
 function setSession(payload) {
   generation++;
+  for (const selector of formLocks.keys()) unlockForm(selector);
+  publishing = false;
+  savingUser = false;
+  for (const selector of [
+    "#submitLogin",
+    "#logoutButton",
+    "#refreshButton",
+    "#saveUser",
+    "#pauseButton",
+    "#checkTelegram",
+    "#linkTelegram",
+    "#unlinkTelegram",
+    "#passwordForm button",
+  ])
+    $(selector).disabled = false;
+  $("#publishButton").disabled = true;
+  $("#retryTelegram").disabled = true;
   $("#bybitResearchReport").replaceChildren();
   $("#bybitResearchStatus").textContent = "";
   $("#bybitResearchButton").disabled = false;
@@ -390,6 +439,7 @@ function setSession(payload) {
     "#telegramMessage",
     "#botCheckMessage",
     "#groupCheckMessage",
+    "#themeMessage",
   ])
     message(id, "");
   $("#lastUpdate").textContent = "لم يتم التحديث";
@@ -511,18 +561,21 @@ function signalCard(signal) {
     form.append(select, button);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
+      const version = generation;
+      if (button.disabled) return;
       button.disabled = true;
       try {
         await api(`/api/admin/signals/${signal.id}`, {
           method: "PATCH",
           data: { status: select.value },
         });
+        if (version !== generation) return;
         notify("تم تحديث حالة الإشارة.");
         await refresh();
       } catch (err) {
-        message("#adminMessage", err.message);
+        if (version === generation) message("#adminMessage", err.message);
       } finally {
-        button.disabled = false;
+        if (version === generation) button.disabled = false;
       }
     });
     wrap.append(form);
@@ -757,7 +810,7 @@ function renderAdmin() {
   $("#pauseButton").textContent = overview.paused
     ? "استئناف نشر الإشارات"
     : "إيقاف نشر الإشارات";
-  $("#publishButton").disabled = overview.paused;
+  $("#publishButton").disabled = overview.paused || publishing;
   $("#adminTelegramStatus").textContent = overview.telegram.configured
     ? `التوكن مضاف على الخادم. جروب الإشارات الخاص: ${overview.telegram.groupConfigured ? "رقمه مضاف؛ افحص الخصوصية والصلاحيات" : "غير مربوط"}. إدارة العضوية يدوية عندك فقط.`
     : "Telegram غير مفعّل. أضف توكن البوت في إعدادات الخادم.";
@@ -928,7 +981,7 @@ async function refreshOnce() {
       }
     }
   } finally {
-    $("#refreshButton").disabled = false;
+    if (version === generation) $("#refreshButton").disabled = false;
   }
 }
 
@@ -942,6 +995,8 @@ $("#heroLogin").addEventListener("click", openLogin);
 $("#closeLogin").addEventListener("click", () => $("#loginDialog").close());
 $("#loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if ($("#submitLogin").disabled) return;
+  let version = generation;
   $("#submitLogin").disabled = true;
   message("#loginError", "");
   try {
@@ -952,27 +1007,33 @@ $("#loginForm").addEventListener("submit", async (event) => {
         password: $("#loginPassword").value,
       },
     });
+    if (version !== generation) return;
     setSession(result);
+    version = generation;
     $("#loginDialog").close();
     await loadDisplayPreferences();
+    if (version !== generation) return;
     await refresh();
   } catch (err) {
+    if (version !== generation) return;
     if (unavailable(err)) showServiceUnavailable(err);
     else message("#loginError", err.message);
   } finally {
-    $("#submitLogin").disabled = !serviceReady;
+    if (version === generation) $("#submitLogin").disabled = !serviceReady;
   }
 });
 $("#logoutButton").addEventListener("click", async () => {
+  const version = generation;
   $("#logoutButton").disabled = true;
   try {
     await api("/api/logout", { method: "POST", data: {} });
+    if (version !== generation) return;
     setSession(null);
     history.replaceState(null, "", "/");
   } catch (err) {
-    message("#globalError", err.message);
+    if (version === generation) message("#globalError", err.message);
   } finally {
-    $("#logoutButton").disabled = false;
+    if (version === generation) $("#logoutButton").disabled = false;
   }
 });
 $("#refreshButton").addEventListener("click", refresh);
@@ -1028,7 +1089,9 @@ $("#historyNext").addEventListener("click", () => {
 });
 $("#passwordForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const button = event.submitter;
+  const version = generation;
+  const button = event.submitter || $("#passwordForm button");
+  if (button.disabled) return;
   button.disabled = true;
   try {
     await api("/api/password", {
@@ -1038,45 +1101,57 @@ $("#passwordForm").addEventListener("submit", async (event) => {
         password: $("#newPassword").value,
       },
     });
+    if (version !== generation) return;
     setSession(null);
     notify("تم تغيير كلمة المرور. سجّل الدخول مجددًا.");
     openLogin();
   } catch (err) {
-    message("#passwordMessage", err.message);
+    if (version === generation) message("#passwordMessage", err.message);
   } finally {
-    button.disabled = false;
+    if (version === generation) button.disabled = false;
   }
 });
 $("#linkTelegram").addEventListener("click", async () => {
+  const version = generation;
   $("#linkTelegram").disabled = true;
   try {
     const result = await api("/api/telegram/link", {
       method: "POST",
       data: {},
     });
+    if (version !== generation) return;
     const url = new URL(result.url);
     if (url.origin !== "https://t.me") throw new Error("رابط البوت غير صحيح.");
     $("#telegramLink").href = url.href;
     $("#telegramLink").hidden = false;
     message("#telegramMessage", "الرابط صالح لعشر دقائق. افتحه واضغط Start.");
   } catch (err) {
-    message("#telegramMessage", err.message);
+    if (version === generation) message("#telegramMessage", err.message);
   } finally {
-    $("#linkTelegram").disabled = !active();
+    if (version === generation) $("#linkTelegram").disabled = !active();
   }
 });
 $("#unlinkTelegram").addEventListener("click", async () => {
+  const version = generation;
+  $("#unlinkTelegram").disabled = true;
   try {
     await api("/api/telegram/link", { method: "DELETE", data: {} });
+    if (version !== generation) return;
     notify("تم فك ربط Telegram.");
     await refresh();
   } catch (err) {
-    message("#telegramMessage", err.message);
+    if (version === generation) message("#telegramMessage", err.message);
+  } finally {
+    if (version === generation) $("#unlinkTelegram").disabled = false;
   }
 });
 $("#userForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (savingUser) return;
+  const version = generation;
+  savingUser = true;
   $("#saveUser").disabled = true;
+  lockForm("#userForm");
   try {
     const id = $("#editUserId").value;
     const data = {
@@ -1090,13 +1165,19 @@ $("#userForm").addEventListener("submit", async (event) => {
       method: id ? "PATCH" : "POST",
       data,
     });
+    if (version !== generation) return;
+    unlockForm("#userForm");
     resetUser();
     notify(id ? "تم تحديث صلاحيات الحساب." : "تم إنشاء الحساب.");
     await refresh();
   } catch (err) {
-    message("#adminMessage", err.message);
+    if (version === generation) message("#adminMessage", err.message);
   } finally {
-    $("#saveUser").disabled = false;
+    if (version === generation) {
+      unlockForm("#userForm");
+      savingUser = false;
+      $("#saveUser").disabled = false;
+    }
   }
 });
 function resetUser() {
@@ -1111,7 +1192,11 @@ function resetUser() {
 $("#cancelEdit").addEventListener("click", resetUser);
 $("#signalForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (publishing) return;
+  const version = generation;
+  publishing = true;
   $("#publishButton").disabled = true;
+  lockForm("#signalForm");
   try {
     const data = {
       direction: $("#direction").value,
@@ -1128,6 +1213,7 @@ $("#signalForm").addEventListener("submit", async (event) => {
       method: "POST",
       data: { ...data, requestId: draft.requestId },
     });
+    if (version !== generation) return;
     $("#signalForm").reset();
     draft = null;
     notify(
@@ -1137,48 +1223,61 @@ $("#signalForm").addEventListener("submit", async (event) => {
     );
     await refresh();
   } catch (err) {
-    message("#adminMessage", err.message);
+    if (version === generation) message("#adminMessage", err.message);
   } finally {
-    $("#publishButton").disabled = Boolean(overview?.paused);
+    if (version === generation) {
+      unlockForm("#signalForm");
+      publishing = false;
+      $("#publishButton").disabled = !overview || Boolean(overview.paused);
+    }
   }
 });
 $("#pauseButton").addEventListener("click", async () => {
   if (!overview) return;
+  const version = generation;
   $("#pauseButton").disabled = true;
   try {
     await api("/api/admin/settings", {
       method: "PATCH",
       data: { paused: !overview.paused },
     });
+    if (version !== generation) return;
     await refresh();
   } catch (err) {
-    message("#adminMessage", err.message);
+    if (version === generation) message("#adminMessage", err.message);
   } finally {
-    $("#pauseButton").disabled = false;
+    if (version === generation) $("#pauseButton").disabled = false;
   }
 });
 $("#checkTelegram").addEventListener("click", async () => {
+  const version = generation;
   $("#checkTelegram").disabled = true;
   try {
     const result = await api("/api/admin/telegram/check", {
       method: "POST",
       data: {},
     });
+    if (version !== generation) return;
     message("#botCheckMessage", `تم الاتصال بالبوت @${result.bot.username}.`);
   } catch (err) {
-    message("#botCheckMessage", err.message);
+    if (version === generation) message("#botCheckMessage", err.message);
   } finally {
-    $("#checkTelegram").disabled = false;
+    if (version === generation) $("#checkTelegram").disabled = false;
   }
 });
 $("#retryTelegram").addEventListener("click", async () => {
+  const version = generation;
   $("#retryTelegram").disabled = true;
   try {
     await api("/api/admin/telegram/retry", { method: "POST", data: {} });
+    if (version !== generation) return;
     notify("تمت جدولة إعادة المحاولة للرسائل الصالحة.");
     await refresh();
   } catch (err) {
-    message("#botCheckMessage", err.message);
+    if (version === generation) {
+      message("#botCheckMessage", err.message);
+      $("#retryTelegram").disabled = !overview?.telegram.configured;
+    }
   }
 });
 $("#checkTelegramGroup").addEventListener("click", async () => {
@@ -1257,31 +1356,36 @@ $("#themeForm").addEventListener("submit", async (event) => {
   }
 });
 async function checkService() {
+  let version = generation;
   setServiceReady(false);
   $("#retryService").disabled = true;
   try {
     const health = await api("/api/health");
+    if (version !== generation) return;
     if (health.ok !== true)
       throw Object.assign(
         new Error("خدمة الحسابات غير جاهزة حاليًا. تواصل مع الإدارة."),
         { code: "SERVICE_RESPONSE_INVALID" },
       );
     const result = await api("/api/me");
+    if (version !== generation) return;
     if (!Object.hasOwn(result, "user"))
       throw Object.assign(
         new Error("رد خدمة الحسابات غير صالح. تواصل مع الإدارة."),
         { code: "SERVICE_RESPONSE_INVALID" },
       );
     setSession(result);
+    version = generation;
     if (user) await loadDisplayPreferences();
+    if (version !== generation) return;
     setServiceReady(true);
     $("#serviceNotice").hidden = true;
     if (user) await refresh();
     else if (["/members", "/admin"].includes(location.pathname)) openLogin();
   } catch (err) {
-    showServiceUnavailable(err);
+    if (version === generation) showServiceUnavailable(err);
   } finally {
-    $("#retryService").disabled = false;
+    if (version === generation) $("#retryService").disabled = false;
   }
 }
 function init() {

@@ -1,315 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createCloudApp } from "../lib/cloud-server.js";
 import { digest } from "../lib/crypto.js";
-
-const ADMIN = "00000000-0000-4000-8000-000000000001";
-const MEMBER = "00000000-0000-4000-8000-000000000002";
-const PASSWORD = "test-provider-password";
-const json = (value, status = 200) =>
-  new Response(JSON.stringify(value), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-
-// Only the provider HTTP boundary is simulated. Requests use the real Supabase SDK.
-// Actual SQL, grants, RLS, quotas and RPC validation are tested in supabase-db.test.js.
-async function fixture(t, overrides = {}, marketOptions = {}) {
-  const env = {
-    SUPABASE_URL: "https://project.example.test",
-    SUPABASE_ANON_KEY: "test-public-key",
-    SUPABASE_SERVICE_ROLE_KEY: "test-server-secret",
-    TELEGRAM_BOT_TOKEN: "test-bot-secret",
-    TELEGRAM_WEBHOOK_SECRET: "test-hook-secret",
-    CRON_SECRET: "test-job-secret",
-    ...overrides,
-  };
-  const tables = {
-    wg_profiles: [ADMIN, MEMBER].map((id, n) => ({
-      id,
-      email: `${n ? "member" : "admin"}@example.test`,
-      role: n ? "member" : "admin",
-      active: true,
-      must_change_password: false,
-      quota: n ? 2 : 0,
-      used: 0,
-      expires_at: n ? new Date(Date.now() + 86400000).toISOString() : null,
-      telegram_chat_id: n ? "1001" : null,
-    })),
-    wg_sessions: [],
-    wg_signals: [],
-    wg_allocations: [],
-    wg_outbox: [],
-    wg_signal_events: [],
-    wg_audit: [],
-    wg_settings: [{ id: 1, theme: "gold", paused: false }],
-    wg_telegram_links: [],
-  };
-  const calls = [],
-    sent = [];
-  const userMetadata = new Map();
-  const telegramPolicy = { public: false };
-  let unavailable = false,
-    authUnavailable = false;
-  const matches = (row, url) =>
-    [...url.searchParams].every(([key, value]) => {
-      if (["select", "order", "limit", "on_conflict"].includes(key))
-        return true;
-      const [op, ...parts] = value.split("."),
-        expected = parts.join(".");
-      if (op === "eq") return String(row[key]) === expected;
-      if (op === "gt") return row[key] > expected;
-      if (op === "gte") return row[key] >= expected;
-      if (op === "lte") return row[key] <= expected;
-      if (op === "in")
-        return expected.slice(1, -1).split(",").includes(String(row[key]));
-      throw new Error(`Unsupported provider filter: ${op}`);
-    });
-  const fetchImpl = async (input, options = {}) => {
-    const url = new URL(input),
-      method = options.method || "GET",
-      headers = new Headers(options.headers);
-    const data = options.body ? JSON.parse(options.body) : undefined;
-    calls.push({ path: url.pathname, method, data, headers });
-    if (url.hostname === "api.telegram.org") {
-      if (url.pathname.endsWith("sendMessage")) sent.push(data);
-      const method = url.pathname.split("/").pop();
-      if (method === "getChat")
-        return json({
-          ok: true,
-          result: {
-            id: Number(data.chat_id),
-            type: "supergroup",
-            title: "Private signals",
-            permissions: { can_invite_users: false },
-            ...(telegramPolicy.public ? { username: "public-group" } : {}),
-          },
-        });
-      if (method === "getChatAdministrators")
-        return json({
-          ok: true,
-          result: [{ status: "creator", user: { id: 999 } }],
-        });
-      if (method === "getChatMember")
-        return json({
-          ok: true,
-          result: {
-            status: "administrator",
-            user: { id: 77 },
-            can_invite_users: false,
-            can_restrict_members: false,
-          },
-        });
-      return json({
-        ok: true,
-        result: { id: 77, username: "test_wetagold_bot" },
-      });
-    }
-    assert.equal(url.origin, env.SUPABASE_URL);
-    if (url.pathname === "/auth/v1/token") {
-      assert.equal(headers.get("apikey"), env.SUPABASE_ANON_KEY);
-      if (authUnavailable)
-        return json({ message: "internal test-provider failure" }, 503);
-      const user = tables.wg_profiles.find((p) => p.email === data.email);
-      if (!user || data.password !== PASSWORD)
-        return json({ message: "Invalid login credentials" }, 400);
-      const claims = Buffer.from(
-        JSON.stringify({
-          sub: user.id,
-          exp: Math.floor(Date.now() / 1000) + 3600,
-        }),
-      ).toString("base64url");
-      return json({
-        access_token: `eyJhbGciOiJIUzI1NiJ9.${claims}.test-signature`,
-        refresh_token: "test-refresh-token",
-        token_type: "bearer",
-        expires_in: 3600,
-        user: {
-          id: user.id,
-          email: user.email,
-          aud: "authenticated",
-          role: "authenticated",
-          app_metadata: { role: "admin" },
-          created_at: new Date().toISOString(),
-        },
-      });
-    }
-    if (url.pathname === "/auth/v1/logout")
-      return new Response(null, { status: 204 });
-    if (url.pathname === "/auth/v1/user")
-      return json({ id: ADMIN, email: "admin@example.test" });
-    if (url.pathname.startsWith("/auth/v1/admin/users")) {
-      assert.equal(headers.get("apikey"), env.SUPABASE_SERVICE_ROLE_KEY);
-      if (method === "POST")
-        return json({ id: crypto.randomUUID(), email: data.email });
-      if (method === "PUT" && data.user_metadata) {
-        const id = url.pathname.split("/").pop();
-        userMetadata.set(id, {
-          ...userMetadata.get(id),
-          ...data.user_metadata,
-        });
-        return json({ id, user_metadata: userMetadata.get(id) });
-      }
-      if (method === "GET") {
-        const id = url.pathname.split("/").pop();
-        return json({ id, user_metadata: userMetadata.get(id) || {} });
-      }
-      if (method === "PUT")
-        return json({
-          id: url.pathname.split("/").pop(),
-          email: "member@example.test",
-        });
-      return json({});
-    }
-    if (unavailable)
-      return json(
-        {
-          code: "42P01",
-          message: "private database diagnostic, test-server-secret",
-        },
-        404,
-      );
-    assert.equal(headers.get("apikey"), env.SUPABASE_SERVICE_ROLE_KEY);
-    if (url.pathname.startsWith("/rest/v1/rpc/")) {
-      const name = url.pathname.split("/").pop();
-      if (name === "wg_settings_update")
-        Object.assign(tables.wg_settings[0], data.p_data);
-      if (name === "wg_member_update")
-        Object.assign(
-          tables.wg_profiles.find((p) => p.id === data.p_id),
-          {
-            quota: data.p_quota,
-            expires_at: data.p_expires,
-            active: data.p_active,
-          },
-        );
-      if (name === "wg_publish") return json({ id: 1, recipients: 1 });
-      if (name === "wg_history") {
-        const available = tables.wg_signals.filter(
-          (s) =>
-            data.p_user === ADMIN ||
-            tables.wg_allocations.some(
-              (a) => a.user_id === data.p_user && a.signal_id === s.id,
-            ),
-        );
-        const rows = available
-          .filter(
-            (s) =>
-              (data.p_status === "all" || s.status === data.p_status) &&
-              (data.p_direction === "all" ||
-                s.direction === data.p_direction) &&
-              (!data.p_from || s.created_at >= data.p_from) &&
-              (!data.p_to || s.created_at < data.p_to),
-          )
-          .sort(
-            (a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id,
-          );
-        return json({
-          available: available.length,
-          total: rows.length,
-          page: data.p_page,
-          pageSize: 20,
-          signals: rows.slice((data.p_page - 1) * 20, data.p_page * 20),
-        });
-      }
-      if (name === "wg_get_signals")
-        return json(
-          tables.wg_signals.filter(
-            (s) =>
-              data.p_user === ADMIN ||
-              tables.wg_allocations.some(
-                (a) => a.user_id === data.p_user && a.signal_id === s.id,
-              ),
-          ),
-        );
-      if (name === "wg_delivery_counts") return json([]);
-      if (name === "wg_claim_delivery") {
-        const rows = tables.wg_outbox.filter((r) => r.state === "pending");
-        rows.forEach((r) => {
-          r.state = "processing";
-          r.lease_id = "test-lease";
-        });
-        return json(rows);
-      }
-      return json(name === "wg_link_telegram" ? true : null);
-    }
-    const name = url.pathname.split("/").pop(),
-      rows = tables[name];
-    assert.ok(rows, `Unexpected provider endpoint ${url.pathname}`);
-    if (method === "POST") {
-      rows.push(data);
-      return new Response(null, { status: 201 });
-    }
-    if (method === "PATCH") {
-      rows
-        .filter((r) => matches(r, url))
-        .forEach((r) => Object.assign(r, data));
-      return new Response(null, { status: 204 });
-    }
-    if (method === "DELETE") {
-      tables[name] = rows.filter((r) => !matches(r, url));
-      return new Response(null, { status: 204 });
-    }
-    const filtered = rows.filter((r) => matches(r, url));
-    return json(
-      headers.get("accept") === "application/vnd.pgrst.object+json"
-        ? filtered[0]
-        : filtered,
-    );
-  };
-  const app = createCloudApp(env, { fetchImpl, ...marketOptions });
-  await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
-  t.after(() => app.close());
-  const origin = `http://127.0.0.1:${app.server.address().port}`;
-  const request = async (
-    path,
-    { method = "GET", data, auth, headers = {} } = {},
-  ) => {
-    const response = await fetch(origin + path, {
-      method,
-      headers: {
-        origin,
-        "content-type": "application/json",
-        ...(auth ? { cookie: auth.cookie, "x-csrf-token": auth.csrf } : {}),
-        ...headers,
-      },
-      ...(method === "GET" ? {} : { body: JSON.stringify(data || {}) }),
-    });
-    return {
-      status: response.status,
-      headers: response.headers,
-      body: await response.json(),
-    };
-  };
-  const login = async (email = "admin@example.test") => {
-    const r = await request("/api/login", {
-      method: "POST",
-      data: { email, password: PASSWORD },
-    });
-    return {
-      ...r,
-      cookie: r.headers.get("set-cookie")?.split(";")[0],
-      csrf: r.body.csrf,
-    };
-  };
-  return {
-    env,
-    app,
-    origin,
-    tables,
-    calls,
-    sent,
-    telegramPolicy,
-    request,
-    login,
-    failDatabase: () => {
-      unavailable = true;
-    },
-    failAuth: () => {
-      authUnavailable = true;
-    },
-  };
-}
+import { fixture, ADMIN, MEMBER, PASSWORD } from "./supabase-helpers.js";
 
 test("Supabase missing or invalid configuration fails closed; public branding remains available", async (t) => {
   for (const SUPABASE_URL of [
@@ -910,58 +602,78 @@ test("Supabase status updates automatically send TP to the verified private grou
   );
 });
 
-test("a group becoming public is blocked without blocking entitled private notifications", async (t) => {
-  const f = await fixture(t, { TELEGRAM_GROUP_CHAT_ID: "-1001" });
-  f.tables.wg_profiles[0].telegram_chat_id = "999";
-  f.telegramPolicy.public = true;
-  const snapshot = {
-    id: 1,
-    direction: "buy",
-    entry: 100,
-    stop: 99,
-    target: 101.5,
-    status: "stopped",
-    expires_at: new Date(Date.now() - 60000).toISOString(),
-  };
-  f.tables.wg_signals.push(snapshot);
-  f.tables.wg_signal_events.push({
-    id: 1,
-    kind: "status",
-    created_at: new Date().toISOString(),
-    delivery_until: new Date(Date.now() + 86400000).toISOString(),
-    snapshot,
-  });
-  f.tables.wg_outbox.push(
-    {
+for (const rejectedPolicy of ["public", "memberPosting"])
+  test(`a group with ${rejectedPolicy} is blocked without blocking entitled private notifications`, async (t) => {
+    const f = await fixture(t, { TELEGRAM_GROUP_CHAT_ID: "-1001" });
+    f.tables.wg_profiles[0].telegram_chat_id = "999";
+    f.telegramPolicy[rejectedPolicy] = true;
+    const snapshot = {
       id: 1,
-      signal_id: 1,
-      event_id: 1,
-      user_id: null,
-      destination: "-1001",
-      state: "pending",
-      attempts: 0,
-    },
-    {
-      id: 2,
-      signal_id: 1,
-      event_id: 1,
-      user_id: MEMBER,
-      destination: "1001",
-      state: "pending",
-      attempts: 0,
-    },
-  );
-  const r = await f.request("/api/jobs/telegram", {
-    headers: { authorization: `Bearer ${f.env.CRON_SECRET}` },
+      direction: "buy",
+      entry: 100,
+      stop: 99,
+      target: 101.5,
+      status: "stopped",
+      expires_at: new Date(Date.now() - 60000).toISOString(),
+    };
+    f.tables.wg_signals.push(snapshot);
+    f.tables.wg_signal_events.push({
+      id: 1,
+      kind: "status",
+      created_at: new Date().toISOString(),
+      delivery_until: new Date(Date.now() + 86400000).toISOString(),
+      snapshot,
+    });
+    f.tables.wg_outbox.push(
+      {
+        id: 1,
+        signal_id: 1,
+        event_id: 1,
+        user_id: null,
+        destination: "-1001",
+        state: "pending",
+        attempts: 0,
+      },
+      {
+        id: 2,
+        signal_id: 1,
+        event_id: 1,
+        user_id: MEMBER,
+        destination: "1001",
+        state: "pending",
+        attempts: 0,
+      },
+    );
+    const r = await f.request("/api/jobs/telegram", {
+      headers: { authorization: `Bearer ${f.env.CRON_SECRET}` },
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual(
+      f.sent.map((s) => s.chat_id),
+      ["1001"],
+    );
+    assert.match(f.sent[0].text, /وقف الخسارة SL/);
+    assert.equal(f.tables.wg_outbox[0].state, "pending");
+    assert.equal(f.tables.wg_outbox[0].attempts, 1);
   });
-  assert.equal(r.status, 200);
-  assert.deepEqual(
-    f.sent.map((s) => s.chat_id),
-    ["1001"],
+
+test("a password verification outage is not reported as a wrong password and does not revoke the session", async (t) => {
+  const f = await fixture(t),
+    admin = await f.login();
+  f.failAuth();
+  const result = await f.request("/api/password", {
+    method: "POST",
+    auth: admin,
+    data: { currentPassword: PASSWORD, password: "new-test-password-123" },
+  });
+  assert.equal(result.status, 503);
+  assert.equal(result.body.code, "SUPABASE_UNAVAILABLE");
+  assert.doesNotMatch(result.body.error, /الحالية غير صحيحة/);
+  assert.equal(
+    (await f.request("/api/me", { auth: admin })).body.user.role,
+    "admin",
   );
-  assert.match(f.sent[0].text, /وقف الخسارة SL/);
-  assert.equal(f.tables.wg_outbox[0].state, "pending");
-  assert.equal(f.tables.wg_outbox[0].attempts, 1);
+  assert.equal(f.tables.wg_sessions.length, 1);
 });
 
 test("Supabase Telegram webhook/job are secret-protected and publishing sends the durable outbox immediately", async (t) => {

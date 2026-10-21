@@ -108,3 +108,35 @@ test("public groups, unmanaged invitations, unknown owners and bots with members
   assert.equal((await inspectGroup(p.call, "-1001", null)).ready, false);
   assert.equal(p.calls.length, 0);
 });
+
+test("a private group is not ready if ordinary members can send text, media or alter group settings", async () => {
+  for (const permission of [
+    "can_send_messages",
+    "can_send_photos",
+    "can_send_videos",
+    "can_send_other_messages",
+    "can_send_polls",
+    "can_send_documents",
+    "can_add_web_page_previews",
+    "can_change_info",
+    "can_pin_messages",
+    "can_manage_topics",
+  ]) {
+    const p = provider({
+      getChat: {
+        id: -1001,
+        type: "supergroup",
+        permissions: { can_invite_users: false, [permission]: true },
+      },
+    });
+    const result = await inspectGroup(p.call, "-1001", "999");
+    assert.equal(result.ready, false, permission);
+    assert.match(result.message, /اقفل إرسال/);
+    assert.equal(
+      p.calls.some(
+        (c) => c.method.startsWith("set") || c.method === "sendMessage",
+      ),
+      false,
+    );
+  }
+});

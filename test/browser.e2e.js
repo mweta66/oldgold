@@ -7,9 +7,13 @@ import { existsSync } from "node:fs";
 import { fixture, ADMIN_EMAIL, ADMIN_PASSWORD } from "./helpers.js";
 import { EGYPT_ZONE, localInput } from "../time-zones.js";
 import { simulate48h } from "../lib/gold-strategy.js";
+import {
+  fixture as cloudFixture,
+  PASSWORD as CLOUD_PASSWORD,
+} from "./supabase-helpers.js";
 
-async function brandedPage(t, options = {}) {
-  const f = await fixture();
+async function brandedPage(t, options = {}, makeFixture = fixture) {
+  const f = await makeFixture();
   t.after(() => f.app.close());
   const browser = await chromium.launch({
     executablePath:
@@ -30,8 +34,233 @@ async function brandedPage(t, options = {}) {
       body: "<!doctype html><title>Provider test boundary</title>",
     }),
   );
-  return { f, context, page: await context.newPage() };
+  const page = await context.newPage(),
+    errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  t.after(() =>
+    assert.deepEqual(errors, [], "Unexpected browser JavaScript errors"),
+  );
+  return { f, context, page };
 }
+
+test("production-shaped Vercel HTTPS browser login uses the real Supabase handler, secure cookies and account isolation", async (t) => {
+  const alias = "https://wetagold-browser-test-team.vercel.app";
+  const { f, page, context } = await brandedPage(
+    t,
+    { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
+    () =>
+      cloudFixture(t, {
+        VERCEL: "1",
+        PUBLIC_ORIGIN: "https://wetagold.vercel.app",
+        VERCEL_URL: new URL(alias).hostname,
+      }),
+  );
+  await context.route(`${alias}/**`, async (route) => {
+    const url = new URL(route.request().url());
+    const response = await route.fetch({
+      url: f.origin + url.pathname + url.search,
+      headers: route.request().headers(),
+    });
+    await route.fulfill({ response });
+  });
+  await page.goto(alias);
+  for (const email of ["admin@example.test", "member@example.test"]) {
+    await page.locator("#loginButton").click();
+    await page.locator("#loginEmail").fill(email);
+    await page.locator("#loginPassword").fill(CLOUD_PASSWORD);
+    await page.locator("#submitLogin").click();
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#lastUpdate")
+        .textContent.startsWith("آخر مزامنة:"),
+    );
+    assert.match(
+      await page.locator("#identity").textContent(),
+      new RegExp(email.replaceAll(".", "\\.")),
+    );
+    const cookie = (await context.cookies(alias)).find(
+      (c) => c.name === "wg_session",
+    );
+    assert.ok(cookie.httpOnly && cookie.secure && cookie.sameSite === "Strict");
+    assert.doesNotMatch(
+      await page.evaluate(() => document.cookie),
+      /wg_session/,
+    );
+    assert.equal(
+      await page.locator("#adminPanel").isVisible(),
+      email.startsWith("admin"),
+    );
+    await page.reload();
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#lastUpdate")
+        .textContent.startsWith("آخر مزامنة:"),
+    );
+    assert.equal(await page.locator("#landing").isVisible(), false);
+    if (email.startsWith("admin")) {
+      await page.locator("#siteTheme").selectOption("ocean");
+      await page.locator("#saveTheme").click();
+      await page.waitForFunction(
+        () => document.documentElement.dataset.theme === "ocean",
+      );
+    } else {
+      assert.equal(
+        await page.evaluate(
+          async () => (await fetch("/api/admin/overview")).status,
+        ),
+        403,
+      );
+      assert.equal(
+        await page.locator("#bybitResearchButton").isVisible(),
+        false,
+      );
+    }
+    await page.locator("#logoutButton").click();
+    await page.waitForSelector("#heroLogin", { state: "visible" });
+    assert.equal(await page.locator("#adminPanel").isVisible(), false);
+  }
+  assert.equal(f.tables.wg_signals.length, 0);
+  const a11y = await new AxeBuilder({ page })
+    .exclude("iframe")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  assert.deepEqual(
+    a11y.violations.map((v) => v.id),
+    [],
+  );
+});
+
+test("late successful mutations cannot log out a new session, reset its form or reveal a previous Telegram link", async (t) => {
+  const { f, page, context } = await brandedPage(t);
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  t.after(() => release());
+  let received = 0;
+  for (const path of [
+    "/api/password",
+    "/api/telegram/link",
+    "/api/admin/users",
+  ]) {
+    await context.route(`**${path}`, async (route) => {
+      received++;
+      await gate;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(
+          path.includes("telegram")
+            ? { url: "https://t.me/old_session_private_link" }
+            : { ok: true },
+        ),
+      });
+    });
+  }
+  await page.goto(f.origin);
+  const login = async () => {
+    await page.locator("#loginButton").click();
+    await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+    await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+    await page.locator("#submitLogin").click();
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#lastUpdate")
+        .textContent.startsWith("آخر مزامنة:"),
+    );
+  };
+  await login();
+  await page.locator("#linkTelegram").click();
+  await page.locator("#currentPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#newPassword").fill("new-password-test-only");
+  await page.locator("#passwordForm").evaluate((form) => form.requestSubmit());
+  await page.locator("#userEmail").fill("old-draft@example.test");
+  await page.locator("#userPassword").fill("member-password-test-only");
+  await page.locator("#userQuota").fill("2");
+  await page
+    .locator("#userExpiry")
+    .fill(localInput(f.now() + 86400000, EGYPT_ZONE));
+  await page.locator("#saveUser").click();
+  await page.waitForFunction(
+    () => document.querySelector("#saveUser").disabled,
+  );
+  assert.equal(received, 3);
+  await page.locator("#logoutButton").click();
+  await page.waitForSelector("#heroLogin", { state: "visible" });
+  await login();
+  await page.locator("#userEmail").fill("new-session-draft@example.test");
+  const done = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/password",
+  );
+  release();
+  await (await done).finished();
+  await page.waitForFunction(
+    () => !document.querySelector("#logoutButton").disabled,
+  );
+  assert.equal(await page.locator("#adminPanel").isVisible(), true);
+  assert.equal(await page.locator("#loginDialog").isVisible(), false);
+  assert.equal(await page.locator("#telegramLink").isVisible(), false);
+  assert.equal(
+    await page.locator("#userEmail").inputValue(),
+    "new-session-draft@example.test",
+  );
+});
+
+test("refresh cannot re-enable publication or accept a duplicate submission while publishing", async (t) => {
+  const { f, page, context } = await brandedPage(t);
+  let release,
+    posts = 0;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  t.after(() => release());
+  await context.route("**/api/admin/signals", async (route) => {
+    posts++;
+    await gate;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ id: 123, recipients: 0 }),
+    });
+  });
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  for (const [id, value] of [
+    ["entry", "100"],
+    ["stop", "99"],
+    ["target", "102"],
+    ["referencePrice", "100"],
+    ["quoteAt", localInput(f.now(), EGYPT_ZONE)],
+  ])
+    await page.locator(`#${id}`).fill(value);
+  await page.locator("#publishButton").click();
+  await page.locator("#refreshButton").click();
+  await page.waitForFunction(
+    () => !document.querySelector("#refreshButton").disabled,
+  );
+  assert.equal(await page.locator("#publishButton").isDisabled(), true);
+  assert.equal(await page.locator("#entry").isDisabled(), true);
+  await page
+    .locator("#signalForm")
+    .evaluate((form) =>
+      form.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      ),
+    );
+  assert.equal(posts, 1);
+  release();
+  await page.waitForFunction(
+    () => !document.querySelector("#publishButton").disabled,
+  );
+  assert.equal(await page.locator("#entry").isDisabled(), false);
+  assert.equal(await page.locator("#entry").inputValue(), "");
+});
 
 test("administrator research is explicitly hypothetical, survives provider failures and clears on logout", async (t) => {
   const { f, page, context } = await brandedPage(t, {
@@ -279,12 +508,20 @@ test("temporary service failures after login preserve the session, last data and
       return route.continue();
     if (failure === "network") return route.abort("failed");
     return route.fulfill({
-      status: failure === "html" ? 502 : 503,
+      status: ["invalid", "invalidSession"].includes(failure)
+        ? 200
+        : failure === "html"
+          ? 502
+          : 503,
       contentType: failure === "html" ? "text/html" : "application/json",
       body:
-        failure === "html"
-          ? "<h1>Temporary upstream failure</h1>"
-          : JSON.stringify({ error: "خدمة الحسابات غير متاحة مؤقتًا." }),
+        failure === "invalidSession"
+          ? "{}"
+          : failure === "invalid"
+            ? "null"
+            : failure === "html"
+              ? "<h1>Temporary upstream failure</h1>"
+              : JSON.stringify({ error: "خدمة الحسابات غير متاحة مؤقتًا." }),
     });
   });
   await page.goto(f.origin);
@@ -316,6 +553,8 @@ test("temporary service failures after login preserve the session, last data and
   for (const [path, mode] of [
     ["/api/me", "network"],
     ["/api/me", "json"],
+    ["/api/me", "invalid"],
+    ["/api/me", "invalidSession"],
     ["/api/signals", "html"],
     ["/api/admin/overview", "json"],
   ]) {
