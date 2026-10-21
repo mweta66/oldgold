@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { createProxy } from "../api/[...path].js";
+import { createProxy } from "../api/index.js";
 import { fixture, ADMIN_EMAIL, ADMIN_PASSWORD } from "./helpers.js";
 
 test("Vercel proxy relays login cookies, CSRF and protected data to the real server", async (t) => {
