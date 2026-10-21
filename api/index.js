@@ -1,4 +1,6 @@
-// Production uses Supabase directly. The named proxy remains for legacy Node deployments.
+// One explicit Vercel entrypoint serves all /api/* rewrites, including nested
+// admin, webhook and scheduler paths. The original request URL stays intact.
+// The named proxy remains for legacy Node deployments.
 import { createSupabaseHandler } from "../lib/supabase.js";
 export function createProxy(env = process.env, fetchImpl = fetch) {
   return async (req, res) => {
