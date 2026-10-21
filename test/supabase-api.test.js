@@ -14,7 +14,7 @@ const json = (value, status = 200) =>
 
 // Only the provider HTTP boundary is simulated. Requests use the real Supabase SDK.
 // Actual SQL, grants, RLS, quotas and RPC validation are tested in supabase-db.test.js.
-async function fixture(t, overrides = {}) {
+async function fixture(t, overrides = {}, marketOptions = {}) {
   const env = {
     SUPABASE_URL: "https://project.example.test",
     SUPABASE_ANON_KEY: "test-public-key",
@@ -257,7 +257,7 @@ async function fixture(t, overrides = {}) {
         : filtered,
     );
   };
-  const app = createCloudApp(env, { fetchImpl });
+  const app = createCloudApp(env, { fetchImpl, ...marketOptions });
   await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(() => app.close());
   const origin = `http://127.0.0.1:${app.server.address().port}`;
@@ -338,6 +338,43 @@ test("Supabase missing or invalid configuration fails closed; public branding re
     );
     assert.equal((await fetch(f.origin + "/.env")).status, 404);
   }
+});
+
+test("Supabase research route checks roles before public-market access and does not mutate signals", async (t) => {
+  let calls = 0;
+  const f = await fixture(
+    t,
+    {},
+    {
+      bybitFetchImpl: async () => {
+        calls++;
+        return new Response("denied", { status: 403 });
+      },
+    },
+  );
+  assert.equal((await f.request("/api/admin/research/bybit")).status, 401);
+  const member = await f.login("member@example.test");
+  assert.equal(
+    (await f.request("/api/admin/research/bybit", { auth: member })).status,
+    403,
+  );
+  assert.equal(calls, 0);
+  const admin = await f.login();
+  const failed = await f.request("/api/admin/research/bybit", { auth: admin });
+  assert.equal(failed.status, 503);
+  assert.equal(failed.body.code, "BYBIT_ACCESS_DENIED");
+  assert.equal(calls, 1);
+  assert.equal(
+    (await f.request("/api/me", { auth: admin })).body.user.role,
+    "admin",
+  );
+  for (const table of [
+    "wg_signals",
+    "wg_allocations",
+    "wg_outbox",
+    "wg_signal_events",
+  ])
+    assert.equal(f.tables[table].length, 0);
 });
 
 test("real Supabase SDK: password login, opaque sessions, CSRF, role isolation and global theme persistence", async (t) => {

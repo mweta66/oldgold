@@ -222,10 +222,12 @@ async function api(path, { method = "GET", data } = {}) {
       credentials: "same-origin",
       cache: "no-store",
       signal: AbortSignal.timeout(
-        path.startsWith("/api/admin/signals") ||
-          path === "/api/admin/telegram/group-check"
-          ? 30000
-          : 15000,
+        path === "/api/admin/research/bybit"
+          ? 45000
+          : path.startsWith("/api/admin/signals") ||
+              path === "/api/admin/telegram/group-check"
+            ? 30000
+            : 15000,
       ),
       headers: {
         ...(data === undefined ? {} : { "content-type": "application/json" }),
@@ -328,6 +330,9 @@ function clearSignals() {
 
 function setSession(payload) {
   generation++;
+  $("#bybitResearchReport").replaceChildren();
+  $("#bybitResearchStatus").textContent = "";
+  $("#bybitResearchButton").disabled = false;
   themeDirty = false;
   themeSaving = false;
   $("#saveTheme").disabled = false;
@@ -1287,6 +1292,110 @@ function init() {
   return serviceCheck;
 }
 $("#retryService").addEventListener("click", init);
+$("#bybitResearchButton").addEventListener("click", async () => {
+  const researchStamp = (value) =>
+    Number.isFinite(value)
+      ? `${zonedParts(value, displayZone).date} ${zonedParts(value, displayZone).time} ${offsetCaption(value)}`
+      : "غير مسجّل";
+  const researchPrice = (value) =>
+    new Intl.NumberFormat("en-US", { maximumFractionDigits: 10 }).format(value);
+  const current = generation;
+  const button = $("#bybitResearchButton");
+  button.disabled = true;
+  $("#bybitResearchStatus").textContent =
+    "جاري التحقق من السوق والشموع المغلقة…";
+  try {
+    const report = await api("/api/admin/research/bybit");
+    if (current !== generation) return;
+    const container = $("#bybitResearchReport");
+    container.replaceChildren();
+    container.append(
+      element(
+        "p",
+        `${report.market.venue} · ${report.market.symbol} · ${report.market.description}`,
+      ),
+    );
+    container.append(
+      element(
+        "p",
+        `من ${researchStamp(report.window.start)} إلى ${researchStamp(report.window.end)}. آخر سعر: ${researchPrice(report.ticker.last)} USDT، بتاريخ ${researchStamp(report.ticker.asOf)}.`,
+      ),
+    );
+    container.append(
+      element(
+        "p",
+        `التغطية: ${report.coverage.observedMinutes}/${report.coverage.expectedMinutes} دقيقة؛ تهيئة المؤشرات: ${report.coverage.warmupObservedMinutes}/${report.coverage.warmupExpectedMinutes}. ${report.coverage.complete ? "مكتملة" : "ناقصة — النتائج لا تمثل كامل الفترة"}.`,
+      ),
+    );
+    const costs = report.costs;
+    container.append(
+      element(
+        "p",
+        `افتراضات التكلفة (نقاط أساس): عمولة ${costs.feeBpsPerSide} لكل جانب، سبريد ${costs.spreadBps}، انزلاق ${costs.slippageBpsPerSide} لكل جانب. التمويل غير محسوب. R وحدة مخاطرة افتراضية وليست أرباح حسابك.`,
+      ),
+    );
+    for (const warning of report.warnings)
+      container.append(element("p", warning, "muted small"));
+    container.append(
+      element(
+        "p",
+        `${report.stats.count} صفقة افتراضية؛ ${report.stats.resolved} بنتائج محسومة؛ صافي النتائج المعروفة ${report.stats.netRKnown.toFixed(2)}R. غير المحسوم لا يُحتسب ربحًا أو خسارة مؤكدة.`,
+      ),
+    );
+    const wrap = element("div", undefined, "table-wrap"),
+      table = element("table");
+    const head = element("thead"),
+      row = element("tr");
+    for (const label of [
+      "الاتجاه",
+      "وقت الدخول",
+      "الدخول / SL / TP",
+      "وقت رصد الإغلاق",
+      "النتيجة",
+      "صافي R",
+    ]) {
+      const th = element("th", label);
+      th.scope = "col";
+      row.append(th);
+    }
+    head.append(row);
+    table.append(head);
+    const body = element("tbody");
+    const labels = {
+      open: "مفتوحة",
+      target: "هدف",
+      stopped: "وقف",
+      time_exit: "خروج زمني",
+      ambiguous: "TP وSL بنفس الدقيقة — غير محسوم",
+      unresolved_gap: "فجوة بيانات — غير محسوم",
+    };
+    for (const trade of report.trades) {
+      const tr = element("tr");
+      for (const value of [
+        trade.direction === "buy" ? "شراء" : "بيع",
+        researchStamp(trade.openedAt),
+        `${researchPrice(trade.entry)} / ${researchPrice(trade.stop)} / ${researchPrice(trade.target)}`,
+        researchStamp(trade.exitAt),
+        labels[trade.status] || "غير معروف",
+        Number.isFinite(trade.netR) ? trade.netR.toFixed(2) : "غير محسوم",
+      ])
+        tr.append(element("td", value));
+      body.append(tr);
+    }
+    table.append(body);
+    wrap.append(table);
+    container.append(wrap);
+    $("#bybitResearchStatus").textContent = report.stats.count
+      ? "اكتملت المحاكاة البحثية — لم تُنشر أي صفقة."
+      : "لا توجد إشارات وفق القواعد في البيانات المتاحة؛ لم تُنشأ صفقات مصطنعة.";
+  } catch (err) {
+    if (current === generation)
+      $("#bybitResearchStatus").textContent =
+        `${err.message} أي تقرير سابق لم يُحدّث.`;
+  } finally {
+    if (current === generation) button.disabled = false;
+  }
+});
 void init();
 void loadCountryCatalog();
 void syncAppearance();

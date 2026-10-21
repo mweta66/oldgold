@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createBybitResearch } from "./lib/bybit-research.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve, join } from "node:path";
@@ -45,8 +46,15 @@ const timestamp = (value) =>
 export async function createApp(options = {}) {
   const env = options.env || process.env;
   if (env.SUPABASE_URL || env.STORAGE_PROVIDER === "supabase")
-    return createCloudApp(env, { fetchImpl: options.fetchImpl });
+    return createCloudApp(env, {
+      fetchImpl: options.fetchImpl,
+      bybitFetchImpl: options.bybitFetchImpl,
+    });
   const now = options.now || Date.now;
+  const bybitResearch = createBybitResearch({
+    fetchImpl: options.bybitFetchImpl || options.fetchImpl,
+    now,
+  });
   const databasePath =
     options.databasePath ||
     env.DATABASE_PATH ||
@@ -466,6 +474,8 @@ export async function createApp(options = {}) {
     }
     if (!path.startsWith("/api/admin/")) throw error(404, "المسار غير موجود.");
     const { user: admin } = requireAdmin(req);
+    if (method === "GET" && path === "/api/admin/research/bybit")
+      return send(await bybitResearch());
     if (method === "GET" && path === "/api/admin/overview") {
       return send({
         users: db

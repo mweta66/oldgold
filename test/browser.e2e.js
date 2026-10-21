@@ -6,6 +6,7 @@ import { mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { fixture, ADMIN_EMAIL, ADMIN_PASSWORD } from "./helpers.js";
 import { EGYPT_ZONE, localInput } from "../time-zones.js";
+import { simulate48h } from "../lib/gold-strategy.js";
 
 async function brandedPage(t, options = {}) {
   const f = await fixture();
@@ -31,6 +32,82 @@ async function brandedPage(t, options = {}) {
   );
   return { f, context, page: await context.newPage() };
 }
+
+test("administrator research is explicitly hypothetical, survives provider failures and clears on logout", async (t) => {
+  const { f, page, context } = await brandedPage(t, {
+    viewport: { width: 390, height: 844 },
+  });
+  const end = 1800000000000;
+  const candles = Array.from({ length: 4320 }, (_, i) => ({
+    time: end - (4320 - i) * 60000,
+    open: 4000 + i,
+    high: 4001.1 + i,
+    low: 3999.9 + i,
+    close: 4001 + i,
+    volume: 10,
+  }));
+  const report = {
+    ...simulate48h(candles, { end, tickSize: 0.01 }),
+    market: {
+      venue: "Bybit",
+      symbol: "TESTXAUUSDT",
+      description: "Synthetic fixture only",
+    },
+    ticker: { last: 5000, asOf: end },
+    researchOnly: true,
+  };
+  let fail = false,
+    calls = 0;
+  await context.route("**/api/admin/research/bybit", (route) => {
+    calls++;
+    return route.fulfill({
+      status: fail ? 503 : 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        fail ? { error: "provider temporarily unavailable" } : report,
+      ),
+    });
+  });
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForSelector("#bybitResearchButton", { state: "visible" });
+  assert.equal(calls, 0);
+  await page.locator("#bybitResearchButton").click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#bybitResearchReport")
+      .textContent.includes("TESTXAUUSDT"),
+  );
+  const text = await page.locator("#bybitResearchReport").textContent();
+  assert.match(text, /2880\/2880/);
+  assert.match(text, /1440\/1440/);
+  assert.doesNotMatch(text, /\[object/);
+  assert.match(text, /2027/);
+  assert.match(
+    await page.locator("#bybitResearchStatus").textContent(),
+    /لم تُنشر/,
+  );
+  fail = true;
+  await page.locator("#bybitResearchButton").click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#bybitResearchStatus")
+      .textContent.includes("provider temporarily unavailable"),
+  );
+  assert.ok(await page.locator("#adminPanel").isVisible());
+  assert.match(
+    await page.locator("#bybitResearchReport").textContent(),
+    /TESTXAUUSDT/,
+  );
+  await page.locator("#logoutButton").click();
+  await page.waitForFunction(
+    () => document.querySelector("#bybitResearchReport").textContent === "",
+  );
+  assert.equal(await page.locator("#bybitResearchReport").textContent(), "");
+});
 
 test("Cairo, real logo/watermark and all four administrator-controlled themes work on desktop and mobile", async (t) => {
   const { f, page, context } = await brandedPage(t);
