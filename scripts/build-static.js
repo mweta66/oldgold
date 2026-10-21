@@ -1,4 +1,4 @@
-import { mkdir, copyFile } from "node:fs/promises";
+import { mkdir, copyFile, cp } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 const root = new URL("../", import.meta.url);
 const destination = new URL("dist/", root);
@@ -12,4 +12,7 @@ for (const name of [
 ]) {
   await copyFile(new URL(name, root), new URL(name, destination));
 }
+await cp(new URL("assets/", root), new URL("assets/", destination), {
+  recursive: true,
+});
 console.log(`Static frontend built in ${fileURLToPath(destination)}`);

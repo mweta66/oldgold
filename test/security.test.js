@@ -24,7 +24,7 @@ test("anonymous API access, static allowlist and security headers", async (t) =>
     /script-src 'self'/,
   );
   assert.equal(response.headers.get("x-frame-options"), "DENY");
-  assert.doesNotMatch(html, /2384|68\.4|السوق مفتوح|Cairo|locked/);
+  assert.doesNotMatch(html, /2384|68\.4|السوق مفتوح|القاهرة|locked/);
   assert.match(html, /id="memberPanel" hidden/);
 });
 

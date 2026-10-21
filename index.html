@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="ar" dir="rtl" data-theme="gold">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -9,8 +9,19 @@
     />
     <meta name="theme-color" content="#0b0e14" />
     <title>WetaGold | إشارات الذهب</title>
-    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/assets/wetagold-mark.png" type="image/png" />
+    <link
+      rel="preload"
+      href="/assets/fonts/cairo-arabic.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="manifest"
+      href="/manifest.webmanifest"
+      crossorigin="use-credentials"
+    />
     <link rel="stylesheet" href="/styles.css" />
     <script src="/app.js" defer></script>
   </head>
@@ -18,17 +29,24 @@
     <a class="skip-link" href="#main">انتقل للمحتوى</a>
     <header class="topbar">
       <a class="brand" href="/" aria-label="WetaGold الرئيسية"
-        ><span class="brand-mark" aria-hidden="true">W</span
-        ><span dir="ltr">Weta<span class="gold">Gold</span></span></a
+        ><img
+          class="brand-logo"
+          src="/assets/wetagold-mark.png"
+          alt=""
+          width="50"
+          height="50"
+        />
+        <span dir="ltr">Weta<span class="gold">Gold</span></span></a
       >
       <nav aria-label="القائمة الرئيسية">
         <a href="#memberPanel" class="member-only" hidden>الإشارات</a>
+        <a href="#tradeHistory" class="member-only" hidden>سجل الصفقات</a>
         <a href="#accountPanel" class="member-only" hidden>حسابي</a>
         <a href="#adminPanel" id="adminNav" hidden>لوحة المدير</a>
       </nav>
       <div class="top-actions">
         <span id="identity" class="muted"></span
-        ><button id="loginButton" class="primary-btn" type="button">
+        ><button id="loginButton" class="primary-btn" type="button" disabled>
           تسجيل الدخول</button
         ><button id="logoutButton" class="secondary-btn" type="button" hidden>
           تسجيل الخروج
@@ -38,15 +56,35 @@
 
     <main class="container" id="main">
       <p id="globalError" class="message error" role="alert" hidden></p>
+      <section
+        id="serviceNotice"
+        class="message"
+        role="status"
+        aria-labelledby="serviceNoticeTitle"
+        hidden
+      >
+        <h2 id="serviceNoticeTitle">تسجيل الدخول غير متاح حاليًا</h2>
+        <p id="serviceExplanation"></p>
+        <button type="button" id="retryService" class="secondary-btn">
+          إعادة فحص الاتصال
+        </button>
+      </section>
       <section class="hero" id="landing">
         <div class="hero-content">
-          <p class="eyebrow">WETAGOLD · GOLD SIGNALS</p>
-          <h1>الذهب يستحق<br /><span class="gold">رؤية أوضح.</span></h1>
-          <p class="hero-copy">
-            مكان واحد لمتابعة إشارات XAUUSD، مستويات الدخول والخروج، وصلاحيات
-            اشتراكك.
+          <p class="eyebrow">
+            <span class="eyebrow-line"></span> WETAGOLD · GOLD INTELLIGENCE
           </p>
-          <button class="primary-btn hero-button" id="heroLogin" type="button">
+          <h1>رؤيتك للذهب.<br /><span class="gold">بُعد جديد.</span></h1>
+          <p class="hero-copy">
+            كل ما تحتاجه لمتابعة إشارات الذهب، في مساحة صُممت للوضوح. من نقطة
+            الدخول إلى إغلاق الإشارة، التفاصيل دايمًا قدامك.
+          </p>
+          <button
+            class="primary-btn hero-button"
+            id="heroLogin"
+            type="button"
+            disabled
+          >
             ادخل لحسابك <span aria-hidden="true">←</span>
           </button>
           <p class="muted small">
@@ -54,21 +92,40 @@
           </p>
         </div>
         <div class="hero-art" aria-hidden="true">
-          <span class="orbit"></span
-          ><span class="gold-symbol">Au<span>79</span></span>
+          <div class="art-grid"></div>
+          <div class="art-glow"></div>
+          <div class="logo-stage">
+            <img
+              src="/assets/wetagold-mark.png"
+              width="320"
+              height="320"
+              alt=""
+            /><span class="logo-stage-name" dir="ltr"
+              >Weta<span>Gold</span></span
+            >
+          </div>
+          <span class="art-chip chip-one"
+            ><b dir="ltr">M15</b> رؤية الاتجاه</span
+          >
+          <span class="art-chip chip-two"
+            ><b dir="ltr">M1</b> توقيت الدخول</span
+          >
           <div class="art-caption" dir="ltr">
-            XAU / USD<span>CLARITY IN EVERY MOVE</span>
+            XAU / USD <span>PRECISION. CLARITY. CONTROL.</span>
           </div>
         </div>
         <div class="feature-strip">
           <div>
-            <b>حسابك، صلاحياتك</b><span>مدة تفعيل وحصة إشارات واضحة</span>
+            <span class="feature-index">01 / حسابك</span><b>كل التفاصيل واضحة</b
+            ><span>مدة تفعيل وحصة إشارات محددة لحسابك</span>
           </div>
           <div>
-            <b>متابعة منظمة</b><span>دخول، وقف، هدف وحالة كل إشارة</span>
+            <span class="feature-index">02 / إشاراتك</span
+            ><b>من الدخول للنتيجة</b><span>دخول، وقف، هدف وسجل للحالات</span>
           </div>
           <div>
-            <b>تنبيهات Telegram</b><span>اربط حسابك لاستقبال إشاراتك</span>
+            <span class="feature-index">03 / تنبيهاتك</span><b>خليك متابع</b
+            ><span>اربط Telegram واستقبل إشارات حسابك</span>
           </div>
         </div>
       </section>
@@ -161,10 +218,27 @@
             >
           </article>
         </div>
-        <article class="panel history-panel">
+        <article class="panel history-panel" id="tradeHistory">
           <div class="panel-head">
-            <h2>سجل إشارات حسابك</h2>
-            <div class="field compact">
+            <div>
+              <p class="eyebrow">TRADE HISTORY</p>
+              <h2>سجل الصفقات والإشارات</h2>
+              <p class="muted small">
+                التاريخ والوقت بتوقيت UTC. أحدث الصفقات أولًا، وكل تاريخ حسابك
+                متاح بالصفحات.
+              </p>
+            </div>
+            <button id="reloadHistory" class="secondary-btn" type="button">
+              تحديث السجل
+            </button>
+          </div>
+          <p class="muted small">
+            ده سجل الإشارات المنشورة ونتائجها المسجّلة، مش سجل تنفيذ مستورد من
+            MT5 أو Bybit. وقت الفتح والإغلاق حسب تسجيل المدير؛ التاريخ القديم
+            غير المتاح يظهر «غير مسجّل».
+          </p>
+          <form id="historyForm" class="history-filters">
+            <div class="field">
               <label for="historyFilter">تصفية الحالة</label
               ><select id="historyFilter">
                 <option value="all">كل الحالات</option>
@@ -176,8 +250,53 @@
                 <option value="cancelled">ملغاة</option>
               </select>
             </div>
+            <div class="field">
+              <label for="historyDirection">الاتجاه</label
+              ><select id="historyDirection">
+                <option value="all">شراء وبيع</option>
+                <option value="buy">شراء</option>
+                <option value="sell">بيع</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="historyFrom">من تاريخ النشر</label
+              ><input type="date" id="historyFrom" dir="ltr" />
+            </div>
+            <div class="field">
+              <label for="historyTo">إلى تاريخ النشر</label
+              ><input type="date" id="historyTo" dir="ltr" />
+            </div>
+            <div class="history-filter-actions">
+              <button id="applyHistory" class="primary-btn" type="submit">
+                عرض النتائج</button
+              ><button id="resetHistory" class="secondary-btn" type="button">
+                مسح الفلاتر
+              </button>
+            </div>
+          </form>
+          <p id="historySummary" class="small muted" role="status"></p>
+          <p id="historyError" class="message error" role="alert" hidden></p>
+          <div id="history" class="empty-state">
+            سجّل الدخول لعرض سجل حسابك.
           </div>
-          <div id="history" class="empty-state">لا توجد إشارات مستلمة.</div>
+          <div class="history-pagination">
+            <button
+              id="historyPrev"
+              class="secondary-btn"
+              type="button"
+              disabled
+            >
+              السابق</button
+            ><span id="historyPage" class="small muted">صفحة 1</span
+            ><button
+              id="historyNext"
+              class="secondary-btn"
+              type="button"
+              disabled
+            >
+              التالي
+            </button>
+          </div>
         </article>
       </section>
 
@@ -216,6 +335,8 @@
             >
             <p class="small muted">
               الإشارات الجديدة المخصصة لحسابك توصلك في رسالة خاصة بعد الربط.
+              الجروب المغلق تضيفك إليه الإدارة بنفسها؛ رابط البوت مش رابط دخول
+              للجروب.
             </p>
             <p id="telegramMessage" role="status" class="small"></p>
           </div>
@@ -262,6 +383,31 @@
           </button>
         </div>
         <p id="adminMessage" class="message" role="status" hidden></p>
+        <article class="panel appearance-panel">
+          <div>
+            <p class="eyebrow">BRAND EXPERIENCE</p>
+            <h3>ثيم الموقع</h3>
+            <p class="muted small">
+              اختيارك يُحفظ للموقع كله ويظهر للزوار والمشتركين. الخط Cairo
+              واللوجو موجودان في كل ثيم.
+            </p>
+          </div>
+          <form id="themeForm">
+            <div class="field">
+              <label for="siteTheme">الألوان العامة</label
+              ><select id="siteTheme">
+                <option value="gold">الذهبي الليلي · Gold</option>
+                <option value="ocean">الأزرق العميق · Ocean</option>
+                <option value="emerald">الأخضر الزمردي · Emerald</option>
+                <option value="ivory">العاجي الفاتح · Ivory</option>
+              </select>
+            </div>
+            <button class="primary-btn" id="saveTheme" type="submit">
+              حفظ الثيم
+            </button>
+            <p class="small" id="themeMessage" role="status"></p>
+          </form>
+        </article>
         <div class="admin-grid">
           <article class="panel">
             <h3>حسابات المشتركين</h3>
@@ -404,10 +550,16 @@
         </article>
         <article class="panel telegram-panel">
           <div class="panel-head">
-            <h3>ربط Telegram وإرسال الإشارات</h3>
+            <h3>جروب الإشارات المغلق وTelegram</h3>
             <div class="button-row">
               <button class="secondary-btn" type="button" id="checkTelegram">
                 فحص اتصال البوت</button
+              ><button
+                class="secondary-btn"
+                type="button"
+                id="checkTelegramGroup"
+              >
+                فحص خصوصية الجروب</button
               ><button class="secondary-btn" type="button" id="retryTelegram">
                 إعادة محاولة الرسائل الفاشلة
               </button>
@@ -416,6 +568,12 @@
           <p id="adminTelegramStatus" class="muted"></p>
           <p id="deliveryStatus" class="small muted"></p>
           <p id="botCheckMessage" class="small" role="status"></p>
+          <p id="groupCheckMessage" class="small" role="status"></p>
+          <p class="message">
+            أنت وحدك تضيف وتخرج أعضاء الجروب من Telegram. الجروب يستقبل كل إشارة
+            جديدة وكل تحديث مسجّل، بما فيه TP وSL. حصص الموقع وانتهاء التفعيل لا
+            تمنع رؤية رسائل الجروب ولا تخرج المشترك منه تلقائيًا.
+          </p>
           <details>
             <summary>خطوات تفعيل الربط</summary>
             <ol>
@@ -428,19 +586,27 @@
                 تحترم حصة الإشارات ومدة التفعيل.
               </li>
               <li>
-                اختياريًا: أضف البوت إلى جروب الإدارة بصلاحية إرسال، واضبط
-                <code>TELEGRAM_ADMIN_CHAT_ID</code>. الجروب يستقبل كل الإشارات
-                للإدارة فقط.
+                أنشئ جروبًا خاصًا بدون اسم مستخدم عام، واقفل صلاحية إضافة
+                الأعضاء للجميع. أنت مالك الجروب، والمشرف الآخر الوحيد هو البوت
+                للإرسال بدون دعوة أو حظر أعضاء أو ترقية مشرفين. ألغِ روابط
+                الدعوة القديمة ولا تنشر رابطًا يسمح بدخول مباشر.
+              </li>
+              <li>
+                اربط حساب المدير بـ Telegram ثم أضف رقم الجروب في إعدادات الخادم
+                باسم <code>TELEGRAM_GROUP_CHAT_ID</code> وافحص خصوصيته. لا ينشر
+                الموقع روابط دعوة ولا يضيف أو يحذف أعضاء.
               </li>
             </ol>
             <p class="small muted">
-              استخدم نسخة خادم واحدة للبوت. التوكن لا يُدخل في الموقع أو
-              المستودع.
+              في وضع Supabase يُستخدم Webhook آمن لاستقبال الربط، وإرسال تلقائي
+              مع طابور للمحاولات التالية. التوكن لا يُدخل في الموقع أو المستودع.
+              الإرسال تلقائي عند تسجيل التحديث على الموقع؛ رصد TP/SL من السوق
+              ليس مفعّلًا بدون مزود أسعار مباشر.
             </p>
           </details>
         </article>
         <article class="panel">
-          <h3>النسخ الاحتياطي اليومي</h3>
+          <h3>قاعدة البيانات والنسخ الاحتياطي</h3>
           <p id="backupStatus" class="small muted"></p>
         </article>
         <article class="panel">
@@ -494,7 +660,14 @@
     </dialog>
     <footer>
       <a class="brand footer-brand" href="/" dir="ltr"
-        >Weta<span class="gold">Gold</span></a
+        ><img
+          class="brand-logo"
+          src="/assets/wetagold-mark.png"
+          alt=""
+          width="32"
+          height="32"
+        />
+        Weta<span class="gold">Gold</span></a
       ><span>إشاراتك، في مكان واحد.</span
       ><span>© <span id="year"></span> WetaGold</span>
     </footer>

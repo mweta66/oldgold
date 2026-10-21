@@ -2,6 +2,31 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fixture } from "./helpers.js";
 
+function privacyResult(method, body) {
+  if (method === "getMe") return { id: 77, username: "WetaTestBot" };
+  if (method === "getChat")
+    return {
+      id: Number(body.chat_id),
+      type: "supergroup",
+      title: "Private signals",
+      permissions: { can_invite_users: false },
+    };
+  if (method === "getChatAdministrators")
+    return [{ status: "creator", user: { id: 999 } }];
+  if (method === "getChatMember")
+    return {
+      status: "administrator",
+      user: { id: 77 },
+      can_invite_users: false,
+      can_restrict_members: false,
+    };
+}
+function linkOwner(f) {
+  f.app.db
+    .prepare("UPDATE users SET telegram_chat_id='999' WHERE role='admin'")
+    .run();
+}
+
 test("bot linking uses a one-time private-chat token and publishing queues real recipients plus the admin group", async (t) => {
   let updates = [],
     sent = [];
@@ -9,11 +34,10 @@ test("bot linking uses a one-time private-chat token and publishing queues real 
     const method = url.split("/").pop(),
       body = JSON.parse(opts.body);
     const result =
-      method === "getMe"
-        ? { username: "WetaTestBot" }
-        : method === "getUpdates"
-          ? updates
-          : (sent.push(body), { message_id: 1 });
+      privacyResult(method, body) ||
+      (method === "getUpdates"
+        ? updates
+        : (sent.push(body), { message_id: 1 }));
     return Response.json({ ok: true, result });
   };
   const f = await fixture({
@@ -24,6 +48,7 @@ test("bot linking uses a one-time private-chat token and publishing queues real 
     fetchImpl,
   });
   t.after(() => f.app.close());
+  linkOwner(f);
   const admin = await f.login(),
     input = f.account("bot@example.test", 1);
   await f.request("/api/admin/users", {
@@ -85,11 +110,101 @@ test("bot linking uses a one-time private-chat token and publishing queues real 
   );
 });
 
+test("private owner-managed group receives publication, opening, TP and SL; updates do not consume quotas", async (t) => {
+  const sent = [],
+    methods = [];
+  const f = await fixture({
+    env: {
+      TELEGRAM_BOT_TOKEN: "test-only-token",
+      TELEGRAM_GROUP_CHAT_ID: "-1001",
+    },
+    fetchImpl: async (url, opts) => {
+      const method = url.split("/").pop(),
+        body = JSON.parse(opts.body);
+      methods.push(method);
+      const known = privacyResult(method, body);
+      if (known) return Response.json({ ok: true, result: known });
+      sent.push(body);
+      return Response.json({ ok: true, result: { message_id: sent.length } });
+    },
+  });
+  t.after(() => f.app.close());
+  linkOwner(f);
+  const admin = await f.login(),
+    input = f.account("event-member@example.test", 1);
+  await f.request("/api/admin/users", {
+    method: "POST",
+    auth: admin,
+    data: input,
+  });
+  f.app.db
+    .prepare("UPDATE users SET telegram_chat_id='123' WHERE email=?")
+    .run(input.email);
+  const published = await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  await f.app.telegram.flush();
+  const update = async (id, status) => {
+    assert.equal(
+      (
+        await f.request(`/api/admin/signals/${id}`, {
+          method: "PATCH",
+          auth: admin,
+          data: { status },
+        })
+      ).status,
+      200,
+    );
+    await f.app.telegram.flush();
+  };
+  await update(published.body.id, "open");
+  f.advance(20 * 60000);
+  await update(published.body.id, "target");
+  const memberTexts = sent
+    .filter((s) => s.chat_id === "123")
+    .map((s) => s.text);
+  assert.equal(memberTexts.length, 3);
+  assert.match(memberTexts[0], /إشارة جديدة/);
+  assert.match(memberTexts[1], /مفتوحة/);
+  assert.match(memberTexts[2], /تحقق الهدف TP/);
+  const next = await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  await f.app.telegram.flush();
+  await update(next.body.id, "open");
+  await update(next.body.id, "stopped");
+  assert.equal(sent.filter((s) => s.chat_id === "-1001").length, 6);
+  assert.match(sent.at(-1).text, /وقف الخسارة SL/);
+  assert.equal(sent.filter((s) => s.chat_id === "123").length, 3);
+  assert.equal(
+    f.app.db.prepare("SELECT used FROM users WHERE email=?").get(input.email)
+      .used,
+    1,
+  );
+  assert.ok(
+    methods.every((m) =>
+      [
+        "getMe",
+        "getChat",
+        "getChatAdministrators",
+        "getChatMember",
+        "sendMessage",
+      ].includes(m),
+    ),
+  );
+});
+
 test("failed deliveries persist and retry without leaking bot credentials; expired recipients are cancelled", async (t) => {
   let fail = true,
     sent = 0;
-  const fetchImpl = async () => {
+  const fetchImpl = async (url, opts) => {
     if (fail) throw new Error("sensitive-url-must-not-be-stored");
+    const known = privacyResult(url.split("/").pop(), JSON.parse(opts.body));
+    if (known) return Response.json({ ok: true, result: known });
     sent++;
     return Response.json({ ok: true, result: { message_id: 1 } });
   };
@@ -101,6 +216,7 @@ test("failed deliveries persist and retry without leaking bot credentials; expir
     fetchImpl,
   });
   t.after(() => f.app.close());
+  linkOwner(f);
   const admin = await f.login();
   await f.request("/api/admin/signals", {
     method: "POST",
@@ -130,7 +246,11 @@ test("failed deliveries persist and retry without leaking bot credentials; expir
   f.advance(16 * 60000);
   await f.app.telegram.flush();
   assert.equal(
-    f.app.db.prepare("SELECT state FROM outbox ORDER BY id DESC").get().state,
+    f.app.db
+      .prepare(
+        "SELECT o.state FROM outbox o JOIN signal_events e ON e.id=o.event_id WHERE e.kind='publish' ORDER BY o.id DESC",
+      )
+      .get().state,
     "cancelled",
   );
 });
@@ -168,12 +288,15 @@ test("failed Telegram messages can be retried by the administrator while signals
       TELEGRAM_BOT_TOKEN: "test-only-token",
       TELEGRAM_ADMIN_CHAT_ID: "-1003",
     },
-    fetchImpl: async () => {
+    fetchImpl: async (url, opts) => {
       if (failing) return Response.json({ ok: false }, { status: 403 });
+      const known = privacyResult(url.split("/").pop(), JSON.parse(opts.body));
+      if (known) return Response.json({ ok: true, result: known });
       return Response.json({ ok: true, result: { message_id: 1 } });
     },
   });
   t.after(() => f.app.close());
+  linkOwner(f);
   const admin = await f.login();
   await f.request("/api/admin/signals", {
     method: "POST",

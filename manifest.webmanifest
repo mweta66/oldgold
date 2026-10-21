@@ -9,9 +9,9 @@
   "theme_color": "#0b0e14",
   "icons": [
     {
-      "src": "/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/assets/wetagold-mark.png",
+      "sizes": "1254x1254",
+      "type": "image/png",
       "purpose": "any"
     }
   ]

@@ -14,8 +14,13 @@ import {
   hashPassword,
   verifyPassword,
 } from "./lib/store.js";
-import { createTelegram, signalMessage } from "./lib/telegram.js";
+import { createTelegram } from "./lib/telegram.js";
+import { recordSignalEvent, expireSignals } from "./lib/telegram-events.js";
+import { groupChatId } from "./lib/telegram-group.js";
 import { createBackups } from "./lib/backups.js";
+import { createCloudApp } from "./lib/cloud-server.js";
+import { validTheme } from "./lib/themes.js";
+import { historyQuery } from "./lib/history.js";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const SESSION_DURATION = 12 * 60 * 60 * 1000;
@@ -34,6 +39,8 @@ const timestamp = (value) =>
 
 export async function createApp(options = {}) {
   const env = options.env || process.env;
+  if (env.SUPABASE_URL || env.STORAGE_PROVIDER === "supabase")
+    return createCloudApp(env, { fetchImpl: options.fetchImpl });
   const now = options.now || Date.now;
   const databasePath =
     options.databasePath ||
@@ -88,6 +95,7 @@ export async function createApp(options = {}) {
     botToken: env.TELEGRAM_BOT_TOKEN,
     fetchImpl: options.fetchImpl,
     now,
+    groupId: groupChatId(env),
   });
   const backups =
     databasePath === ":memory:"
@@ -195,6 +203,8 @@ export async function createApp(options = {}) {
     expiresAt: row.expires_at,
     quoteAt: row.quote_at,
     referencePrice: row.reference_price,
+    openedAt: row.opened_at,
+    closedAt: row.closed_at,
   });
 
   const routes = async (req, res, url) => {
@@ -208,6 +218,12 @@ export async function createApp(options = {}) {
       res.end(JSON.stringify(payload));
     };
     if (method === "GET" && path === "/api/health") return send({ ok: true });
+    if (method === "GET" && path === "/api/appearance")
+      return send({
+        theme:
+          db.prepare("SELECT value FROM settings WHERE key='theme'").get()
+            ?.value || "gold",
+      });
     if (method === "GET" && path === "/api/me") {
       const auth = getSession(req);
       return send(
@@ -295,20 +311,18 @@ export async function createApp(options = {}) {
     if (method === "GET" && path === "/api/signals") {
       const { user } = requireSession(req);
       requireActive(user);
-      db.prepare(
-        "UPDATE signals SET status='expired' WHERE status='pending' AND expires_at<=?",
-      ).run(now());
+      expireSignals(db, now());
       const cutoff = now() - 90 * 86400000;
       const rows =
         user.role === "admin"
           ? db
               .prepare(
-                "SELECT * FROM signals WHERE created_at>=? ORDER BY id DESC LIMIT 200",
+                "SELECT * FROM signals WHERE created_at>=? OR status IN ('pending','open') ORDER BY (status IN ('pending','open')) DESC,id DESC LIMIT 200",
               )
               .all(cutoff)
           : db
               .prepare(
-                "SELECT s.* FROM signals s JOIN allocations a ON a.signal_id=s.id WHERE a.user_id=? AND s.created_at>=? ORDER BY s.id DESC LIMIT 200",
+                "SELECT s.* FROM signals s JOIN allocations a ON a.signal_id=s.id WHERE a.user_id=? AND (s.created_at>=? OR s.status IN ('pending','open')) ORDER BY (s.status IN ('pending','open')) DESC,s.id DESC LIMIT 200",
               )
               .all(user.id, cutoff);
       const closed = rows.filter((row) =>
@@ -321,6 +335,57 @@ export async function createApp(options = {}) {
           closed: closed.length,
           wins: closed.filter((row) => row.status === "target").length,
         },
+        serverTime: now(),
+      });
+    }
+    if (method === "GET" && path === "/api/history") {
+      const { user } = requireSession(req);
+      requireActive(user);
+      const query = historyQuery(url.searchParams);
+      expireSignals(db, now());
+      const conditions = [],
+        args = [];
+      if (user.role !== "admin") {
+        conditions.push(
+          "EXISTS(SELECT 1 FROM allocations a WHERE a.signal_id=s.id AND a.user_id=?)",
+        );
+        args.push(user.id);
+      }
+      const scope = conditions.length ? conditions.join(" AND ") : "1=1";
+      const available = db
+        .prepare(`SELECT count(*) AS total FROM signals s WHERE ${scope}`)
+        .get(...args).total;
+      if (query.status !== "all") {
+        conditions.push("s.status=?");
+        args.push(query.status);
+      }
+      if (query.direction !== "all") {
+        conditions.push("s.direction=?");
+        args.push(query.direction);
+      }
+      if (query.from !== null) {
+        conditions.push("s.created_at>=?");
+        args.push(query.from);
+      }
+      if (query.toExclusive !== null) {
+        conditions.push("s.created_at<?");
+        args.push(query.toExclusive);
+      }
+      const where = conditions.length ? conditions.join(" AND ") : "1=1";
+      const total = db
+        .prepare(`SELECT count(*) AS total FROM signals s WHERE ${where}`)
+        .get(...args).total;
+      const rows = db
+        .prepare(
+          `SELECT s.* FROM signals s WHERE ${where} ORDER BY s.created_at DESC,s.id DESC LIMIT ? OFFSET ?`,
+        )
+        .all(...args, query.pageSize, (query.page - 1) * query.pageSize);
+      return send({
+        signals: rows.map(serializeSignal),
+        total,
+        available,
+        page: query.page,
+        pageSize: query.pageSize,
         serverTime: now(),
       });
     }
@@ -364,7 +429,8 @@ export async function createApp(options = {}) {
           .map((account) => publicUser(account, now())),
         telegram: {
           configured: telegram.configured,
-          adminGroupConfigured: Boolean(env.TELEGRAM_ADMIN_CHAT_ID),
+          adminGroupConfigured: Boolean(groupChatId(env)),
+          groupConfigured: Boolean(groupChatId(env)),
           ...telegram.status,
           deliveries: db
             .prepare(
@@ -373,6 +439,9 @@ export async function createApp(options = {}) {
             .all(),
         },
         backups: backups?.status || null,
+        theme:
+          db.prepare("SELECT value FROM settings WHERE key='theme'").get()
+            ?.value || "gold",
         paused:
           db.prepare("SELECT value FROM settings WHERE key='paused'").get()
             ?.value === "true",
@@ -390,6 +459,13 @@ export async function createApp(options = {}) {
         throw error(502, "البوت غير متصل. تحقق من التوكن والاتصال بالشبكة.");
       }
     }
+    if (method === "POST" && path === "/api/admin/telegram/group-check") {
+      try {
+        return send({ group: await telegram.groupInfo() });
+      } catch {
+        throw error(502, "تعذر فحص الجروب. راجع إعدادات البوت وخصوصية الجروب.");
+      }
+    }
     if (method === "POST" && path === "/api/admin/telegram/retry") {
       db.prepare(
         "UPDATE outbox SET state='pending', attempts=0, next_at=? WHERE state='failed'",
@@ -400,13 +476,22 @@ export async function createApp(options = {}) {
     }
     if (method === "PATCH" && path === "/api/admin/settings") {
       const data = await bodyOf(req);
-      if (typeof data.paused !== "boolean")
+      if (
+        (data.paused !== undefined && typeof data.paused !== "boolean") ||
+        (data.theme !== undefined && !validTheme(data.theme)) ||
+        (data.paused === undefined && data.theme === undefined)
+      )
         throw error(400, "قيمة الإيقاف غير صحيحة.");
       transaction(db, () => {
-        db.prepare(
-          "INSERT INTO settings(key,value) VALUES('paused',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        ).run(String(data.paused));
-        audit(admin, "signals.pause", String(data.paused));
+        if (data.paused !== undefined)
+          db.prepare(
+            "INSERT INTO settings(key,value) VALUES('paused',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          ).run(String(data.paused));
+        if (data.theme !== undefined)
+          db.prepare(
+            "INSERT INTO settings(key,value) VALUES('theme',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          ).run(data.theme);
+        audit(admin, "settings.update", JSON.stringify(data));
       });
       return send({ ok: true });
     }
@@ -524,9 +609,7 @@ export async function createApp(options = {}) {
           .prepare("SELECT id FROM signals WHERE request_id=?")
           .get(data.requestId);
         if (duplicate) return { id: duplicate.id, duplicate: true };
-        db.prepare(
-          "UPDATE signals SET status='expired' WHERE status='pending' AND expires_at<=?",
-        ).run(now());
+        expireSignals(db, now());
         if (
           db
             .prepare(
@@ -555,8 +638,9 @@ export async function createApp(options = {}) {
             admin.id,
           );
         const id = Number(result.lastInsertRowid);
-        const signal = db.prepare("SELECT * FROM signals WHERE id=?").get(id);
-        const message = signalMessage(signal);
+        db.prepare(
+          "UPDATE signals SET telegram_group_chat_id=? WHERE id=?",
+        ).run(telegram.configured ? groupChatId(env) : null, id);
         const subscribers = db
           .prepare(
             "SELECT * FROM users WHERE role='member' AND active=1 AND expires_at>? AND used<quota",
@@ -569,15 +653,13 @@ export async function createApp(options = {}) {
           db.prepare("UPDATE users SET used=used+1 WHERE id=?").run(
             recipient.id,
           );
-          if (telegram.configured && recipient.telegram_chat_id)
-            db.prepare(
-              "INSERT INTO outbox(signal_id,user_id,destination,message,next_at) VALUES(?,?,?,?,?)",
-            ).run(id, recipient.id, recipient.telegram_chat_id, message, now());
         }
-        if (telegram.configured && env.TELEGRAM_ADMIN_CHAT_ID)
-          db.prepare(
-            "INSERT OR IGNORE INTO outbox(signal_id,destination,message,next_at) VALUES(?,?,?,?)",
-          ).run(id, env.TELEGRAM_ADMIN_CHAT_ID, message, now());
+        recordSignalEvent(
+          db,
+          db.prepare("SELECT * FROM signals WHERE id=?").get(id),
+          "publish",
+          now(),
+        );
         audit(admin, "signal.publish", id);
         return { id, recipients: subscribers.length };
       });
@@ -593,19 +675,26 @@ export async function createApp(options = {}) {
         open: ["target", "stopped", "cancelled"],
       };
       transaction(db, () => {
-        db.prepare(
-          "UPDATE signals SET status='expired' WHERE status='pending' AND expires_at<=?",
-        ).run(now());
+        expireSignals(db, now());
         const signal = db.prepare("SELECT * FROM signals WHERE id=?").get(id);
         if (!signal) throw error(404, "الإشارة غير موجودة.");
         if (!transitions[signal.status]?.includes(data.status))
           throw error(409, "تغيير الحالة غير مسموح.");
-        db.prepare("UPDATE signals SET status=? WHERE id=?").run(
-          data.status,
-          id,
+        db.prepare(
+          "UPDATE signals SET status=?,opened_at=CASE WHEN ?='open' THEN coalesce(opened_at,?) ELSE opened_at END,closed_at=CASE WHEN ? IN ('target','stopped','expired','cancelled') THEN ? ELSE closed_at END WHERE id=?",
+        ).run(data.status, data.status, now(), data.status, now(), id);
+        db.prepare(
+          "UPDATE signals SET telegram_group_chat_id=? WHERE id=?",
+        ).run(telegram.configured ? groupChatId(env) : null, id);
+        recordSignalEvent(
+          db,
+          db.prepare("SELECT * FROM signals WHERE id=?").get(id),
+          "status",
+          now(),
         );
         audit(admin, `signal.${data.status}`, id);
       });
+      void telegram.flush();
       return send({ ok: true });
     }
     throw error(404, "المسار غير موجود.");
@@ -618,6 +707,15 @@ export async function createApp(options = {}) {
     ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
     ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
     ["/icon.svg", ["icon.svg", "image/svg+xml"]],
+    ["/assets/wetagold-mark.png", ["assets/wetagold-mark.png", "image/png"]],
+    [
+      "/assets/fonts/cairo-arabic.woff2",
+      ["assets/fonts/cairo-arabic.woff2", "font/woff2"],
+    ],
+    [
+      "/assets/fonts/cairo-latin.woff2",
+      ["assets/fonts/cairo-latin.woff2", "font/woff2"],
+    ],
     [
       "/manifest.webmanifest",
       ["manifest.webmanifest", "application/manifest+json"],
@@ -633,7 +731,7 @@ export async function createApp(options = {}) {
     );
     res.setHeader(
       "content-security-policy",
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; frame-src https://www.tradingview.com; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'self'; manifest-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; frame-src https://www.tradingview.com; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     );
     res.setHeader("cache-control", "no-store");
     if (secure) res.setHeader("strict-transport-security", "max-age=31536000");

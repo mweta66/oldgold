@@ -7,6 +7,42 @@ let user = null,
   refreshTask = null,
   refreshAgain = false,
   generation = 0;
+let serviceReady = false,
+  serviceCheck = null;
+let historyData = null,
+  historyPage = 1,
+  historySerial = 0,
+  historyBusy = false;
+let historyFilters = { status: "all", direction: "all", from: "", to: "" };
+let themeDirty = false,
+  themeSaving = false;
+function applyHistoryFilters() {
+  historyFilters = {
+    status: $("#historyFilter").value,
+    direction: $("#historyDirection").value,
+    from: $("#historyFrom").value,
+    to: $("#historyTo").value,
+  };
+  historyPage = 1;
+  void loadHistory();
+}
+const THEMES = ["gold", "ocean", "emerald", "ivory"];
+function applyTheme(theme) {
+  if (!THEMES.includes(theme)) return;
+  const changed = document.documentElement.dataset.theme !== theme;
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]').content =
+    theme === "ivory" ? "#f5f2eb" : "#0b0e14";
+  if (changed && $("#chartContainer iframe")) loadChart();
+}
+async function syncAppearance() {
+  try {
+    const data = await api("/api/appearance");
+    if (!themeSaving) applyTheme(data.theme);
+  } catch {
+    /* The default theme remains usable while the service is unavailable. */
+  }
+}
 let chartInterval = "1",
   toastTimer,
   draft = null;
@@ -60,7 +96,12 @@ async function api(path, { method = "GET", data } = {}) {
       method,
       credentials: "same-origin",
       cache: "no-store",
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(
+        path.startsWith("/api/admin/signals") ||
+          path === "/api/admin/telegram/group-check"
+          ? 30000
+          : 15000,
+      ),
       headers: {
         ...(data === undefined ? {} : { "content-type": "application/json" }),
         ...(method === "GET" ? {} : { "x-csrf-token": csrf }),
@@ -68,38 +109,85 @@ async function api(path, { method = "GET", data } = {}) {
       ...(data === undefined ? {} : { body: JSON.stringify(data) }),
     });
   } catch {
-    throw new Error("تعذر الاتصال بالخادم. تحقق من الاتصال وحاول مجددًا.");
+    throw Object.assign(
+      new Error("تعذر الاتصال بالخادم. تحقق من الاتصال وحاول مجددًا."),
+      { code: "SERVICE_UNREACHABLE" },
+    );
   }
   let payload;
   try {
     payload = await response.json();
   } catch {
-    throw new Error("الخدمة غير متاحة. تأكد من تشغيل خادم WetaGold.");
+    throw Object.assign(
+      new Error("الخدمة غير متاحة. تواصل مع إدارة WetaGold."),
+      { code: "SERVICE_RESPONSE_INVALID", status: response.status },
+    );
   }
   if (!response.ok) {
     if (response.status === 401 && path !== "/api/login") setSession(null);
-    throw new Error(payload.error || "تعذر تنفيذ العملية.");
+    throw Object.assign(new Error(payload.error || "تعذر تنفيذ العملية."), {
+      status: response.status,
+      code: payload.code,
+    });
   }
   return payload;
 }
 
+const unavailable = (err) =>
+  err.status >= 500 ||
+  err.code?.startsWith("BACKEND_") ||
+  err.code?.startsWith("SERVICE_");
+function setServiceReady(ready) {
+  serviceReady = ready;
+  $("#loginButton").disabled = !ready;
+  $("#heroLogin").disabled = !ready;
+  $("#submitLogin").disabled = !ready;
+}
+function showServiceUnavailable(err) {
+  if ($("#loginDialog").open) $("#loginDialog").close();
+  setSession(null);
+  setServiceReady(false);
+  message("#serviceExplanation", err.message);
+  $("#serviceNotice").hidden = false;
+}
+
 function clearSignals() {
   signals = [];
+  historySerial++;
+  historyData = null;
+  historyBusy = false;
   $("#currentSignal").replaceChildren(
     element("div", "لا توجد إشارات متاحة لحسابك حاليًا.", "empty-state"),
   );
   $("#history").replaceChildren(
-    element("div", "لا توجد إشارات مستلمة.", "empty-state"),
+    element(
+      "div",
+      "سجل الحساب غير محمّل. اضغط تحديث السجل للمحاولة مجددًا.",
+      "empty-state",
+    ),
   );
+  $("#historySummary").textContent = "";
+  $("#historyPage").textContent = "صفحة 1";
+  $("#historyPrev").disabled = true;
+  $("#historyNext").disabled = true;
+  $("#history").setAttribute("aria-busy", "false");
+  message("#historyError", "");
   $("#winStat").textContent = "—";
   $("#winNote").textContent = "لا توجد نتائج مغلقة بعد";
 }
 
 function setSession(payload) {
   generation++;
+  themeDirty = false;
+  themeSaving = false;
+  $("#saveTheme").disabled = false;
+  $("#checkTelegramGroup").disabled = false;
   user = payload?.user || null;
   csrf = payload?.csrf || "";
   clearSignals();
+  historyPage = 1;
+  $("#historyForm").reset();
+  historyFilters = { status: "all", direction: "all", from: "", to: "" };
   overview = null;
   $("#usersTable").replaceChildren();
   $("#auditLog").replaceChildren();
@@ -143,6 +231,7 @@ function setSession(payload) {
     "#passwordMessage",
     "#telegramMessage",
     "#botCheckMessage",
+    "#groupCheckMessage",
   ])
     message(id, "");
   $("#lastUpdate").textContent = "لم يتم التحديث";
@@ -178,6 +267,7 @@ function renderAccount() {
     $("#telegramLink").removeAttribute("href");
   }
   $("#signalWorkspace").hidden = !active();
+  $("#tradeHistory").hidden = !active();
   message(
     "#accessNotice",
     !active()
@@ -196,7 +286,8 @@ function loadChart() {
     interval: chartInterval,
     hidesidebar: "1",
     symboledit: "0",
-    theme: "dark",
+    theme:
+      document.documentElement.dataset.theme === "ivory" ? "light" : "dark",
     style: "1",
     timezone: "Etc/UTC",
   });
@@ -240,6 +331,8 @@ function signalCard(signal) {
     element("span", `رقم الإشارة: #${signal.id} · ${signal.symbol}`),
     element("span", `العائد للمخاطرة: 1 : ${risk.toFixed(2)}`),
     element("span", `صدرت: ${date(signal.createdAt)}`),
+    element("span", `فُتحت: ${date(signal.openedAt)}`),
+    element("span", `أُغلقت / انتهت: ${date(signal.closedAt)}`),
     element("span", `صلاحية الدخول: ${date(signal.expiresAt)}`),
     element("span", `السعر المرجعي عند النشر: ${price(signal.referencePrice)}`),
   );
@@ -281,58 +374,180 @@ function renderSignals() {
   const activeSignals = signals.filter((signal) =>
     ["pending", "open"].includes(signal.status),
   );
-  const current = activeSignals.length ? activeSignals : signals.slice(0, 1);
   $("#currentSignal").replaceChildren(
-    ...(current.length
-      ? current.map(signalCard)
-      : [element("div", "لا توجد إشارات متاحة لحسابك حاليًا.", "empty-state")]),
+    ...(activeSignals.length
+      ? activeSignals.map(signalCard)
+      : [
+          element(
+            "div",
+            "لا توجد إشارات نشطة الآن. الصفقات السابقة موجودة في سجل الصفقات بالأسفل.",
+            "empty-state",
+          ),
+        ]),
   );
-  const filter = $("#historyFilter").value,
-    visible = signals.filter(
-      (signal) => filter === "all" || signal.status === filter,
-    );
+}
+
+function stamp(value, fallback = "غير مسجّل") {
+  if (!Number.isFinite(value)) return element("span", fallback, "muted small");
+  const iso = new Date(value).toISOString(),
+    node = element("time", undefined, "date-stamp");
+  node.dateTime = iso;
+  node.dir = "ltr";
+  node.append(
+    element("strong", iso.slice(0, 10)),
+    element("span", `${iso.slice(11, 19)} UTC`),
+  );
+  return node;
+}
+
+function renderHistory() {
+  if (!historyData || !user || !active()) return;
+  const { signals: rows, total, available, page, pageSize } = historyData;
   const history = $("#history");
   history.className = "table-wrap";
   history.replaceChildren();
-  if (!visible.length) {
-    history.append(element("div", "لا توجد إشارات مطابقة.", "empty-state"));
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  $("#historySummary").textContent = total
+    ? `عرض ${rows.length ? (page - 1) * pageSize + 1 : 0}–${Math.min(page * pageSize, total)} من ${total} صفقة / إشارة مطابقة، من أصل ${available} في سجل الحساب.`
+    : `${available} صفقة / إشارة في سجل الحساب.`;
+  $("#historyPage").textContent = `صفحة ${page} من ${pages}`;
+  $("#historyPrev").disabled = historyBusy || page <= 1;
+  $("#historyNext").disabled = historyBusy || page >= pages;
+  if (!rows.length) {
+    const text = available
+      ? "لا توجد صفقات مطابقة للفلاتر أو لهذه الصفحة. امسح الفلاتر لعرض السجل."
+      : user.role === "admin"
+        ? "لسه مفيش صفقات منشورة. انشر إشارة حقيقية من لوحة المدير عشان تظهر هنا؛ الشارت مش بيولّد صفقات تلقائيًا."
+        : !user.remaining
+          ? "لا توجد صفقات مخصصة لحسابك وحصتك من الإشارات الجديدة غير متاحة. تواصل مع المدير لتفعيل حصة."
+          : "لسه مفيش صفقات اتخصصت لحسابك. الإشارات الجديدة هتظهر بعد نشرها بشرط سريان التفعيل والحصة؛ الإشارات السابقة للاشتراك لا تتضاف تلقائيًا.";
+    history.append(element("div", text, "empty-state"));
+    if (!available && user.role === "admin") {
+      const link = element("a", "اذهب لنشر إشارة", "text-link");
+      link.href = "#signalForm";
+      history.append(link);
+    }
     return;
   }
-  const table = element("table"),
+  const table = element("table", undefined, "history-table"),
     head = element("thead"),
     tr = element("tr"),
     body = element("tbody");
   for (const label of [
+    "تاريخ ووقت النشر",
     "الإشارة",
+    "الحالة",
     "الاتجاه",
     "الدخول",
     "الوقف",
     "الهدف",
-    "الحالة",
-    "وقت النشر",
-  ])
-    tr.append(element("th", label));
+    "وقت الفتح",
+    "الإغلاق / الانتهاء",
+    "صلاحية الدخول",
+  ]) {
+    const cell = element("th", label);
+    cell.scope = "col";
+    tr.append(cell);
+  }
   head.append(tr);
-  for (const signal of visible) {
+  for (const signal of rows) {
     const row = element("tr");
-    row.append(
-      element("td", `#${signal.id}`),
-      element("td", signal.direction === "buy" ? "شراء" : "بيع"),
+    const state = element(
+      "span",
+      statuses[signal.status],
+      `badge ${signal.status}`,
     );
-    for (const value of [signal.entry, signal.stop, signal.target]) {
-      const cell = element("td", price(value));
-      cell.dir = "ltr";
+    const closed = ["target", "stopped", "cancelled", "expired"].includes(
+      signal.status,
+    );
+    const cells = [
+      ["النشر", stamp(signal.createdAt)],
+      ["رقم الإشارة", element("strong", `#${signal.id}`)],
+      ["الحالة", state],
+      [
+        "الاتجاه",
+        element(
+          "span",
+          signal.direction === "buy" ? "شراء" : "بيع",
+          signal.direction === "buy" ? "positive" : "negative",
+        ),
+      ],
+      ["الدخول", element("span", price(signal.entry), "number")],
+      ["الوقف", element("span", price(signal.stop), "number negative")],
+      ["الهدف", element("span", price(signal.target), "number positive")],
+      [
+        "الفتح",
+        stamp(
+          signal.openedAt,
+          signal.status === "pending" ? "لم تُفتح بعد" : "غير مسجّل",
+        ),
+      ],
+      [
+        "الإغلاق / الانتهاء",
+        stamp(signal.closedAt, closed ? "غير مسجّل" : "لم تنتهِ بعد"),
+      ],
+      ["صلاحية الدخول", stamp(signal.expiresAt)],
+    ];
+    for (const [label, content] of cells) {
+      const cell = element("td");
+      cell.dataset.label = label;
+      cell.append(content);
       row.append(cell);
     }
-    const state = element("td");
-    state.append(
-      element("span", statuses[signal.status], `badge ${signal.status}`),
-    );
-    row.append(state, element("td", date(signal.createdAt)));
     body.append(row);
   }
   table.append(head, body);
   history.append(table);
+}
+
+async function loadHistory() {
+  if (!user || !active()) return;
+  const serial = ++historySerial,
+    version = generation;
+  historyBusy = true;
+  message("#historyError", "");
+  $("#history").setAttribute("aria-busy", "true");
+  $("#history").replaceChildren(
+    element("div", "جارٍ تحميل سجل الصفقات الحقيقي…", "empty-state"),
+  );
+  $("#historyPrev").disabled = true;
+  $("#historyNext").disabled = true;
+  const params = new URLSearchParams({
+    page: String(historyPage),
+    status: historyFilters.status,
+    direction: historyFilters.direction,
+  });
+  if (historyFilters.from) params.set("from", historyFilters.from);
+  if (historyFilters.to) params.set("to", historyFilters.to);
+  try {
+    const data = await api(`/api/history?${params}`);
+    if (serial !== historySerial || version !== generation) return;
+    const lastPage = Math.max(1, Math.ceil(data.total / data.pageSize));
+    if (data.page > lastPage) {
+      historyPage = lastPage;
+      return await loadHistory();
+    }
+    historyData = data;
+    historyBusy = false;
+    renderHistory();
+  } catch (err) {
+    if (serial !== historySerial || version !== generation) return;
+    historyData = null;
+    $("#history").replaceChildren(
+      element(
+        "div",
+        "السجل غير متاح الآن؛ ده مش معناه إن مفيش صفقات. اضغط تحديث السجل للمحاولة مجددًا.",
+        "empty-state",
+      ),
+    );
+    $("#historySummary").textContent = "";
+    message("#historyError", err.message);
+  } finally {
+    if (serial === historySerial && version === generation) {
+      historyBusy = false;
+      $("#history").setAttribute("aria-busy", "false");
+    }
+  }
 }
 
 function editUser(account) {
@@ -353,15 +568,20 @@ function editUser(account) {
 
 function renderAdmin() {
   if (!overview || user?.role !== "admin") return;
+  if (THEMES.includes(overview.theme)) {
+    if (!themeDirty && !themeSaving) $("#siteTheme").value = overview.theme;
+    if (!themeSaving) applyTheme(overview.theme);
+  }
   $("#pauseButton").textContent = overview.paused
     ? "استئناف نشر الإشارات"
     : "إيقاف نشر الإشارات";
   $("#publishButton").disabled = overview.paused;
   $("#adminTelegramStatus").textContent = overview.telegram.configured
-    ? `التوكن مضاف على الخادم. جروب الإدارة: ${overview.telegram.adminGroupConfigured ? "مضبوط" : "غير مضبوط"}.`
+    ? `التوكن مضاف على الخادم. جروب الإشارات الخاص: ${overview.telegram.groupConfigured ? "رقمه مضاف؛ افحص الخصوصية والصلاحيات" : "غير مربوط"}. إدارة العضوية يدوية عندك فقط.`
     : "Telegram غير مفعّل. أضف توكن البوت في إعدادات الخادم.";
   const deliveryNames = {
     pending: "بانتظار الإرسال",
+    processing: "جارٍ الإرسال",
     sent: "مرسلة",
     failed: "تعذر إرسالها",
     cancelled: "ملغاة",
@@ -377,10 +597,12 @@ function renderAdmin() {
     !overview.telegram.configured ||
     !overview.telegram.deliveries.some((row) => row.state === "failed");
   $("#backupStatus").textContent =
-    overview.backups?.error ||
-    (overview.backups?.lastBackupAt
-      ? `آخر فحص للنسخة اليومية: ${date(overview.backups.lastBackupAt)}`
-      : "النسخ الاحتياطي غير متاح في بيئة الاختبار.");
+    overview.storage === "supabase"
+      ? "البيانات محفوظة في Supabase. إدارة النسخ الاحتياطية والاستعادة تتم من لوحة مشروعك حسب الخطة المستخدمة."
+      : overview.backups?.error ||
+        (overview.backups?.lastBackupAt
+          ? `آخر فحص للنسخة اليومية: ${date(overview.backups.lastBackupAt)}`
+          : "النسخ الاحتياطي غير متاح في بيئة الاختبار.");
   const table = element("table"),
     head = element("thead"),
     row = element("tr"),
@@ -431,6 +653,7 @@ function renderAdmin() {
     "user.create": "إنشاء حساب",
     "user.update": "تعديل حساب",
     "signals.pause": "تغيير حالة النشر",
+    "settings.update": "تغيير إعدادات الموقع",
     "signal.publish": "نشر إشارة",
     "signal.open": "فتح إشارة",
     "signal.target": "تسجيل الهدف",
@@ -492,11 +715,13 @@ async function refreshOnce() {
       signals = result.signals;
       renderAccount();
       renderSignals();
+      await loadHistory();
+      if (version !== generation) return;
       $("#winStat").textContent = result.stats.closed
         ? `${Math.round((result.stats.wins / result.stats.closed) * 100)}%`
         : "—";
       $("#winNote").textContent = result.stats.closed
-        ? `من ${result.stats.closed} إشارة مغلقة في السجل المعروض`
+        ? `من ${result.stats.closed} إشارة مغلقة في ملخص آخر 90 يومًا (حتى 200 إشارة)`
         : "لا توجد نتائج مغلقة بعد";
     } else {
       clearSignals();
@@ -513,7 +738,8 @@ async function refreshOnce() {
   } catch (err) {
     if (version === generation || !user) {
       clearSignals();
-      message("#globalError", err.message);
+      if (unavailable(err)) showServiceUnavailable(err);
+      else message("#globalError", err.message);
     }
   } finally {
     $("#refreshButton").disabled = false;
@@ -521,6 +747,7 @@ async function refreshOnce() {
 }
 
 function openLogin() {
+  if (!serviceReady) return;
   message("#loginError", "");
   $("#loginDialog").showModal();
 }
@@ -543,9 +770,10 @@ $("#loginForm").addEventListener("submit", async (event) => {
     $("#loginDialog").close();
     await refresh();
   } catch (err) {
-    message("#loginError", err.message);
+    if (unavailable(err)) showServiceUnavailable(err);
+    else message("#loginError", err.message);
   } finally {
-    $("#submitLogin").disabled = false;
+    $("#submitLogin").disabled = !serviceReady;
   }
 });
 $("#logoutButton").addEventListener("click", async () => {
@@ -581,7 +809,36 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && $("#chartPanel").classList.contains("expanded"))
     $("#expandChart").click();
 });
-$("#historyFilter").addEventListener("change", renderSignals);
+$("#historyForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  applyHistoryFilters();
+});
+$("#historyFilter").addEventListener("change", () => {
+  applyHistoryFilters();
+});
+$("#historyDirection").addEventListener("change", () => {
+  applyHistoryFilters();
+});
+$("#resetHistory").addEventListener("click", () => {
+  $("#historyForm").reset();
+  applyHistoryFilters();
+});
+$("#reloadHistory").addEventListener("click", () => void loadHistory());
+$("#historyPrev").addEventListener("click", () => {
+  if (historyBusy || historyPage <= 1) return;
+  historyPage--;
+  void loadHistory();
+});
+$("#historyNext").addEventListener("click", () => {
+  if (
+    historyBusy ||
+    !historyData ||
+    historyPage * historyData.pageSize >= historyData.total
+  )
+    return;
+  historyPage++;
+  void loadHistory();
+});
 $("#passwordForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.submitter;
@@ -737,19 +994,94 @@ $("#retryTelegram").addEventListener("click", async () => {
     message("#botCheckMessage", err.message);
   }
 });
-$("#year").textContent = new Date().getFullYear();
-async function init() {
+$("#checkTelegramGroup").addEventListener("click", async () => {
+  const version = generation;
+  $("#checkTelegramGroup").disabled = true;
   try {
+    const { group } = await api("/api/admin/telegram/group-check", {
+      method: "POST",
+      data: {},
+    });
+    if (version !== generation) return;
+    message(
+      "#groupCheckMessage",
+      `${group.ready ? "✓ " : ""}${group.title ? group.title + " · " : ""}${group.message}`,
+    );
+  } catch (err) {
+    if (version === generation) message("#groupCheckMessage", err.message);
+  } finally {
+    if (version === generation) $("#checkTelegramGroup").disabled = false;
+  }
+});
+$("#year").textContent = new Date().getFullYear();
+$("#siteTheme").addEventListener("change", () => {
+  themeDirty = true;
+});
+$("#themeForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const selectedTheme = $("#siteTheme").value,
+    version = generation;
+  themeSaving = true;
+  $("#saveTheme").disabled = true;
+  try {
+    await api("/api/admin/settings", {
+      method: "PATCH",
+      data: { theme: selectedTheme },
+    });
+    if (version !== generation) return;
+    themeDirty = false;
+    applyTheme(selectedTheme);
+    message("#themeMessage", "تم حفظ الثيم للموقع كله.");
+    await refresh();
+  } catch (err) {
+    if (version === generation) message("#themeMessage", err.message);
+  } finally {
+    if (version === generation) {
+      themeSaving = false;
+      $("#saveTheme").disabled = false;
+    }
+  }
+});
+async function checkService() {
+  setServiceReady(false);
+  $("#retryService").disabled = true;
+  try {
+    const health = await api("/api/health");
+    if (health.ok !== true)
+      throw Object.assign(
+        new Error("خدمة الحسابات غير جاهزة حاليًا. تواصل مع الإدارة."),
+        { code: "SERVICE_RESPONSE_INVALID" },
+      );
     const result = await api("/api/me");
+    if (!Object.hasOwn(result, "user"))
+      throw Object.assign(
+        new Error("رد خدمة الحسابات غير صالح. تواصل مع الإدارة."),
+        { code: "SERVICE_RESPONSE_INVALID" },
+      );
     setSession(result);
+    setServiceReady(true);
+    $("#serviceNotice").hidden = true;
     if (user) await refresh();
     else if (["/members", "/admin"].includes(location.pathname)) openLogin();
   } catch (err) {
-    setSession(null);
-    message("#globalError", err.message);
+    showServiceUnavailable(err);
+  } finally {
+    $("#retryService").disabled = false;
   }
 }
+function init() {
+  if (serviceCheck) return serviceCheck;
+  serviceCheck = checkService().finally(() => {
+    serviceCheck = null;
+  });
+  return serviceCheck;
+}
+$("#retryService").addEventListener("click", init);
 void init();
+void syncAppearance();
+setInterval(() => {
+  if (!document.hidden) void syncAppearance();
+}, 30000);
 setInterval(() => {
   if (user && !document.hidden && !$("#loginDialog").open) void refresh();
 }, 15000);
