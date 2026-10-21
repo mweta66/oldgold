@@ -356,6 +356,23 @@ test("arbitrary API errors never disclose token-bearing URLs or response data", 
   assert(!JSON.stringify(r).includes(env.TELEGRAM_BOT_TOKEN));
 });
 
+test("database errors expose only allowlisted SQLSTATE, never the secret-bearing query", async () => {
+  const f = fixture({
+    override: (u) =>
+      u.pathname.endsWith("/database/query")
+        ? json(
+            {
+              message: `ERROR: 42501: permission denied; sensitive SQL ${env.TELEGRAM_BOT_TOKEN}`,
+            },
+            400,
+          )
+        : null,
+  });
+  const r = await f.run();
+  assert.equal(r.error, "SUPABASE_HTTP_400_SQLSTATE_42501");
+  assert(!JSON.stringify(r).includes(env.TELEGRAM_BOT_TOKEN));
+});
+
 test("domain and migration guards reject ambiguity, unverified domains, bad order and missing outer transactions", () => {
   assert.equal(
     productionOrigin([

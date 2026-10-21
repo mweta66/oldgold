@@ -167,7 +167,42 @@ export async function activateCloud(
           },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         });
-        if (!response.ok) fail(`${operation}_HTTP_${response.status}`);
+        if (!response.ok) {
+          let diagnostic = "";
+          if (
+            origin === "https://api.supabase.com" &&
+            path.endsWith("/database/query")
+          ) {
+            // Only a PostgreSQL SQLSTATE from a fixed allowlist is reportable.
+            // Provider messages can contain the query and its secret parameters.
+            try {
+              const text = JSON.stringify(await response.json());
+              const states = [
+                "42601",
+                "42883",
+                "42501",
+                "0A000",
+                "55000",
+                "3F000",
+                "42P01",
+                "22P02",
+                "25006",
+                "23505",
+                "P0001",
+              ];
+              const state = states.find((code) =>
+                new RegExp(`\\b${code}\\b`).test(text),
+              );
+              if (state) diagnostic = `_SQLSTATE_${state}`;
+              else if (/permission denied/i.test(text))
+                diagnostic = "_PERMISSION_DENIED";
+              else if (/read.only/i.test(text)) diagnostic = "_READ_ONLY";
+            } catch {
+              /* Never emit an untrusted upstream response. */
+            }
+          }
+          fail(`${operation}_HTTP_${response.status}${diagnostic}`);
+        }
         return response.status === 204 ? null : await response.json();
       } catch (error) {
         if (error.activationCode) throw error;
@@ -356,6 +391,7 @@ export async function activateCloud(
     mask(cronCandidate);
     mask(webhookCandidate);
     await query(vaultSetupSql(origin, cronCandidate, webhookCandidate), false);
+    stage("vault-read");
     const vault = await query(
       "select (select decrypted_secret from vault.decrypted_secrets where name='wetagold_cron_secret') as cron_secret, (select decrypted_secret from vault.decrypted_secrets where name='wetagold_webhook_secret') as webhook_secret;",
     );
