@@ -742,6 +742,8 @@ input[type="checkbox"] {
   margin-top: 10px;
 }
 .account-grid > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding-inline-end: 30px;
   border-inline-end: 1px solid var(--line);
 }

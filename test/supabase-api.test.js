@@ -47,6 +47,7 @@ async function fixture(t, overrides = {}) {
   };
   const calls = [],
     sent = [];
+  const userMetadata = new Map();
   const telegramPolicy = { public: false };
   let unavailable = false,
     authUnavailable = false;
@@ -141,6 +142,18 @@ async function fixture(t, overrides = {}) {
       assert.equal(headers.get("apikey"), env.SUPABASE_SERVICE_ROLE_KEY);
       if (method === "POST")
         return json({ id: crypto.randomUUID(), email: data.email });
+      if (method === "PUT" && data.user_metadata) {
+        const id = url.pathname.split("/").pop();
+        userMetadata.set(id, {
+          ...userMetadata.get(id),
+          ...data.user_metadata,
+        });
+        return json({ id, user_metadata: userMetadata.get(id) });
+      }
+      if (method === "GET") {
+        const id = url.pathname.split("/").pop();
+        return json({ id, user_metadata: userMetadata.get(id) || {} });
+      }
       if (method === "PUT")
         return json({
           id: url.pathname.split("/").pop(),
@@ -582,6 +595,72 @@ test("Supabase latest trade reuses private all-time history without leaking othe
     historyCalls,
   );
   assert.equal(f.tables.wg_profiles.find((p) => p.id === MEMBER).used, 0);
+});
+
+test("Supabase stores timezone preferences in per-user Auth metadata, not role data or new schema columns", async (t) => {
+  const f = await fixture(t),
+    member = await f.login("member@example.test"),
+    admin = await f.login();
+  assert.equal((await f.request("/api/preferences")).status, 401);
+  assert.equal(
+    (await f.request("/api/preferences", { auth: admin })).body.timeZone,
+    "Africa/Cairo",
+  );
+  const change = await f.request("/api/preferences", {
+    method: "PATCH",
+    auth: member,
+    data: { country: "JP", timeZone: "Asia/Tokyo", role: "admin" },
+  });
+  assert.equal(change.status, 200);
+  const again = await f.login("member@example.test");
+  assert.deepEqual(
+    (await f.request("/api/preferences", { auth: again })).body,
+    { country: "JP", timeZone: "Asia/Tokyo", fixed: false },
+  );
+  assert.equal(
+    (await f.request("/api/me", { auth: member })).body.user.role,
+    "member",
+  );
+  assert.equal(
+    (await f.request("/api/me", { auth: member })).body.user.used,
+    0,
+  );
+  const write = f.calls.find(
+    (c) => c.method === "PUT" && c.data?.user_metadata,
+  );
+  assert.equal(write.path, `/auth/v1/admin/users/${MEMBER}`);
+  assert.deepEqual(write.data, {
+    user_metadata: {
+      wetagold_display: { country: "JP", timeZone: "Asia/Tokyo" },
+    },
+  });
+  assert.equal(
+    (
+      await f.request("/api/preferences", {
+        method: "PATCH",
+        auth: admin,
+        data: { country: "JP", timeZone: "Asia/Tokyo" },
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await f.request("/api/preferences", {
+        method: "PATCH",
+        auth: member,
+        data: { country: "JP", timeZone: "America/New_York" },
+      })
+    ).status,
+    400,
+  );
+  await f.request(
+    "/api/history?from=2026-01-16&to=2026-01-16&timeZone=Asia%2FTokyo",
+    { auth: member },
+  );
+  const range = f.calls.findLast((c) => c.path.endsWith("/wg_history")).data;
+  assert.equal(range.p_from, "2026-01-15T15:00:00.000Z");
+  assert.equal(range.p_to, "2026-01-16T15:00:00.000Z");
 });
 
 test("Supabase account provisioning uses Auth Admin API and never accepts a submitted admin role", async (t) => {

@@ -23,7 +23,7 @@
       crossorigin="use-credentials"
     />
     <link rel="stylesheet" href="/styles.css" />
-    <script src="/app.js" defer></script>
+    <script src="/app.js" type="module"></script>
   </head>
   <body>
     <a class="skip-link" href="#main">انتقل للمحتوى</a>
@@ -158,7 +158,9 @@
           <article class="stat">
             <span>صلاحية الحساب</span
             ><strong id="expiryStat" class="date-value">—</strong
-            ><small>كل التواريخ بتوقيت UTC</small>
+            ><small id="displayTimeNote"
+              >التواريخ بتوقيت UTC حتى اختيار البلد</small
+            >
           </article>
         </div>
         <p id="accessNotice" class="message" hidden></p>
@@ -224,8 +226,8 @@
               <p class="eyebrow">TRADE HISTORY</p>
               <h2>سجل الصفقات والإشارات</h2>
               <p class="muted small">
-                التاريخ والوقت بتوقيت UTC. أحدث الصفقات أولًا، وكل تاريخ حسابك
-                متاح بالصفحات.
+                <span id="historyTimeNote">التاريخ والوقت بتوقيت UTC.</span>
+                أحدث الصفقات أولًا، وكل تاريخ حسابك متاح بالصفحات.
               </p>
             </div>
             <button id="reloadHistory" class="secondary-btn" type="button">
@@ -313,6 +315,38 @@
           الأقل.
         </p>
         <div class="account-grid">
+          <div>
+            <h3>البلد وتوقيت الصفقات</h3>
+            <p id="timezoneSummary" class="muted">التوقيت الافتراضي UTC.</p>
+            <form id="timezoneForm">
+              <div id="timezoneControls">
+                <div class="field">
+                  <label for="accountCountry">البلد</label
+                  ><select id="accountCountry" required>
+                    <option value="">اختر بلدك</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="accountTimeZone">المنطقة الزمنية</label
+                  ><select id="accountTimeZone" dir="ltr" required></select>
+                </div>
+                <button
+                  id="saveTimeZone"
+                  type="submit"
+                  class="secondary-btn"
+                  disabled
+                >
+                  حفظ البلد والتوقيت
+                </button>
+              </div>
+            </form>
+            <p class="muted small">
+              الاختيار محفوظ في حسابك، بدون تحديد موقعك تلقائيًا. التوقيت الصيفي
+              يُراعى حسب تاريخ الصفقة، وتظل أوقات الخادم الأصلية محفوظة دون
+              تغيير.
+            </p>
+            <p id="timezoneMessage" class="message" role="status" hidden></p>
+          </div>
           <div>
             <h3>Telegram</h3>
             <p class="muted" id="telegramStatus">حسابك غير مربوط.</p>
@@ -450,7 +484,8 @@
                   />
                 </div>
                 <div class="field">
-                  <label for="userExpiry">نهاية التفعيل · UTC</label
+                  <label for="userExpiry" id="expiryTimeLabel"
+                    >نهاية التفعيل · توقيت مصر</label
                   ><input id="userExpiry" type="datetime-local" required />
                 </div>
               </div>
@@ -530,7 +565,8 @@
                   />
                 </div>
                 <div class="field">
-                  <label for="quoteAt">وقت السعر · UTC</label
+                  <label for="quoteAt" id="quoteTimeLabel"
+                    >وقت السعر · توقيت مصر</label
                   ><input id="quoteAt" type="datetime-local" required />
                 </div>
               </div>

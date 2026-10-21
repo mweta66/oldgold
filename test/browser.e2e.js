@@ -5,8 +5,9 @@ import AxeBuilder from "@axe-core/playwright";
 import { mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { fixture, ADMIN_EMAIL, ADMIN_PASSWORD } from "./helpers.js";
+import { EGYPT_ZONE, localInput } from "../time-zones.js";
 
-async function brandedPage(t) {
+async function brandedPage(t, options = {}) {
   const f = await fixture();
   t.after(() => f.app.close());
   const browser = await chromium.launch({
@@ -19,6 +20,7 @@ async function brandedPage(t) {
   t.after(() => browser.close());
   const context = await browser.newContext({
     viewport: { width: 1440, height: 1000 },
+    ...options,
   });
   await context.route("https://www.tradingview.com/**", (route) =>
     route.fulfill({
@@ -469,7 +471,7 @@ test("desktop and mobile: real login, account CRUD, publication, member quota, c
   await page.locator("#userQuota").fill("1");
   await page
     .locator("#userExpiry")
-    .fill(new Date(f.now() + 5 * 60000).toISOString().slice(0, 16));
+    .fill(localInput(f.now() + 5 * 60000, EGYPT_ZONE));
   await page.locator("#saveUser").click();
   await page.waitForFunction(() =>
     document
@@ -484,7 +486,7 @@ test("desktop and mobile: real login, account CRUD, publication, member quota, c
     ["#stop", "99"],
     ["#target", "101.5"],
     ["#referencePrice", "100"],
-    ["#quoteAt", new Date(f.now()).toISOString().slice(0, 16)],
+    ["#quoteAt", localInput(f.now(), EGYPT_ZONE)],
   ])
     await page.locator(selector).fill(value);
   await page.locator("#publishButton").click();
@@ -876,6 +878,145 @@ test("latest-trade card covers all-time history, honest missing entry times and 
   await page.locator("#logoutButton").click();
   await page.waitForSelector("#landing", { state: "visible" });
   assert.equal(await page.locator("#currentSignal .signal-item").count(), 0);
+});
+
+test("country timezones persist across logins, local-day filters roll over correctly and admin stays on Egypt time", async (t) => {
+  const { f, page } = await brandedPage(t, {
+    timezoneId: "America/Los_Angeles",
+  });
+  const admin = await f.login(),
+    input = f.account("country-browser@example.test", 1);
+  await f.request("/api/admin/users", {
+    method: "POST",
+    auth: admin,
+    data: input,
+  });
+  const published = await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  const instant = Date.parse("2026-01-15T23:30:45Z");
+  f.app.db
+    .prepare(
+      "UPDATE signals SET status='target',created_at=?,opened_at=?,closed_at=? WHERE id=?",
+    )
+    .run(instant, instant, instant + 60000, published.body.id);
+  const login = async (email, password) => {
+    await page.locator("#loginButton").click();
+    await page.locator("#loginEmail").fill(email);
+    await page.locator("#loginPassword").fill(password);
+    await page.locator("#submitLogin").click();
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#lastUpdate")
+        .textContent.startsWith("آخر مزامنة:"),
+    );
+  };
+  await page.goto(f.origin);
+  await login(input.email, input.password);
+  await page.locator("#accountCountry").selectOption("JP");
+  await page.locator("#accountTimeZone").selectOption("Asia/Tokyo");
+  await page.locator("#saveTimeZone").click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#currentSignal time")
+      .textContent.includes("08:30:45"),
+  );
+  assert.match(
+    await page.locator("#currentSignal time").textContent(),
+    /2026-01-16/,
+  );
+  assert.equal(
+    await page.locator("#currentSignal time").getAttribute("datetime"),
+    new Date(instant).toISOString(),
+  );
+  assert.equal(
+    new URL(
+      await page.locator("#chartContainer iframe").getAttribute("src"),
+    ).searchParams.get("timezone"),
+    "Asia/Tokyo",
+  );
+  await page.locator("#historyFrom").fill("2026-01-16");
+  await page.locator("#historyTo").fill("2026-01-16");
+  await page.locator("#applyHistory").click();
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll("#history tbody tr").length === 1 &&
+      document.querySelector("#history").getAttribute("aria-busy") === "false",
+  );
+  await page.locator("#historyFrom").fill("2026-01-15");
+  await page.locator("#historyTo").fill("2026-01-15");
+  await page.locator("#applyHistory").click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#history")
+      .textContent.includes("لا توجد صفقات مطابقة"),
+  );
+  await page.locator("#accountCountry").selectOption("US");
+  assert.ok((await page.locator("#accountTimeZone option").count()) > 1);
+  await page.locator("#accountTimeZone").selectOption("America/New_York");
+  await page.locator("#saveTimeZone").click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#currentSignal time")
+      .textContent.includes("18:30:45"),
+  );
+  await page.locator("#logoutButton").click();
+  await page.waitForSelector("#landing", { state: "visible" });
+  await login(input.email, input.password);
+  assert.match(
+    await page.locator("#timezoneSummary").textContent(),
+    /America\/New_York/,
+  );
+  assert.equal(await page.locator("#accountCountry").inputValue(), "US");
+  assert.match(
+    await page.locator("#currentSignal time").textContent(),
+    /18:30:45/,
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > innerWidth,
+    ),
+    false,
+  );
+  const timezoneAccessibility = await new AxeBuilder({ page })
+    .exclude("iframe")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  assert.deepEqual(
+    timezoneAccessibility.violations.map((v) => v.id),
+    [],
+  );
+  await page.locator("#logoutButton").click();
+  await page.waitForSelector("#landing", { state: "visible" });
+  await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  assert.equal(await page.locator("#timezoneControls").isVisible(), false);
+  assert.match(
+    await page.locator("#timezoneSummary").textContent(),
+    /توقيت مصر/,
+  );
+  assert.match(
+    await page.locator("#currentSignal time").textContent(),
+    /01:30:45/,
+  );
+  assert.equal(
+    new URL(
+      await page.locator("#chartContainer iframe").getAttribute("src"),
+    ).searchParams.get("timezone"),
+    "Africa/Cairo",
+  );
+  const data = await page.evaluate(async () => {
+    const me = await (await fetch("/api/me")).json();
+    const response = await fetch("/api/preferences", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", "x-csrf-token": me.csrf },
+      body: JSON.stringify({ country: "US", timeZone: "America/New_York" }),
+    });
+    return response.status;
+  });
+  assert.equal(data, 403);
 });
 
 test("first administrator must replace a temporary password before accessing the admin interface", async (t) => {

@@ -6,6 +6,7 @@ await mkdir(destination, { recursive: true });
 for (const name of [
   "index.html",
   "app.js",
+  "time-zones.js",
   "styles.css",
   "icon.svg",
   "manifest.webmanifest",

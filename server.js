@@ -21,6 +21,11 @@ import { createBackups } from "./lib/backups.js";
 import { createCloudApp } from "./lib/cloud-server.js";
 import { validTheme } from "./lib/themes.js";
 import { historyQuery } from "./lib/history.js";
+import {
+  timeZoneCountries,
+  validPreferences,
+  displayPreferences,
+} from "./lib/country-time-zones.js";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const SESSION_DURATION = 12 * 60 * 60 * 1000;
@@ -218,6 +223,8 @@ export async function createApp(options = {}) {
       res.end(JSON.stringify(payload));
     };
     if (method === "GET" && path === "/api/health") return send({ ok: true });
+    if (method === "GET" && path === "/api/time-zones")
+      return send({ countries: timeZoneCountries });
     if (method === "GET" && path === "/api/appearance")
       return send({
         theme:
@@ -307,6 +314,28 @@ export async function createApp(options = {}) {
       });
       res.setHeader("set-cookie", cookie(""));
       return send({ ok: true });
+    }
+    if (path === "/api/preferences" && ["GET", "PATCH"].includes(method)) {
+      const { user } = requireSession(req);
+      if (method === "PATCH") {
+        if (user.role === "admin")
+          throw error(403, "توقيت المدير ثابت على توقيت مصر.");
+        const data = await bodyOf(req);
+        if (!validPreferences(data))
+          throw error(400, "اختر البلد ومنطقة زمنية صحيحة داخله.");
+        db.prepare("UPDATE users SET country=?,time_zone=? WHERE id=?").run(
+          data.country,
+          data.timeZone,
+          user.id,
+        );
+        return send(displayPreferences(user.role, data));
+      }
+      return send(
+        displayPreferences(user.role, {
+          country: user.country,
+          timeZone: user.time_zone,
+        }),
+      );
     }
     if (method === "GET" && path === "/api/signals") {
       const { user } = requireSession(req);
@@ -721,6 +750,7 @@ export async function createApp(options = {}) {
     ["/members", ["index.html", "text/html; charset=utf-8"]],
     ["/admin", ["index.html", "text/html; charset=utf-8"]],
     ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
+    ["/time-zones.js", ["time-zones.js", "text/javascript; charset=utf-8"]],
     ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
     ["/icon.svg", ["icon.svg", "image/svg+xml"]],
     ["/assets/wetagold-mark.png", ["assets/wetagold-mark.png", "image/png"]],

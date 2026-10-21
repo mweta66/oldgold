@@ -1,3 +1,10 @@
+import {
+  EGYPT_ZONE,
+  validTimeZone,
+  zonedParts,
+  localInput,
+  localInputToIso,
+} from "./time-zones.js";
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 let user = null,
@@ -10,6 +17,10 @@ let user = null,
   generation = 0;
 let serviceReady = false,
   serviceCheck = null;
+let displayPreferencesReady = false,
+  displayZone = "UTC",
+  displayCountry = "",
+  countryCatalog = [];
 let historyData = null,
   historyPage = 1,
   historySerial = 0,
@@ -61,15 +72,15 @@ const transitions = {
 };
 const date = (value) =>
   value
-    ? `${new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(value)} UTC`
+    ? `${new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short", timeZone: displayZone }).format(value)} · ${zoneCaption(value)}`
     : "—";
 const price = (value) =>
   new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2,
   }).format(value);
-const inputDate = (value) => new Date(value).toISOString().slice(0, 16);
-const isoDate = (value) => new Date(`${value}:00Z`).toISOString();
+const inputDate = (value) => localInput(value, displayZone);
+const isoDate = (value) => localInputToIso(value, displayZone);
 const active = () => Boolean(user?.accessActive);
 const element = (tag, text, className = "") => {
   const node = document.createElement(tag);
@@ -82,6 +93,118 @@ const message = (selector, text) => {
   node.textContent = text;
   node.hidden = !text;
 };
+function offsetCaption(value) {
+  return new Intl.DateTimeFormat("en", {
+    timeZone: displayZone,
+    timeZoneName: "shortOffset",
+  })
+    .formatToParts(value)
+    .find((p) => p.type === "timeZoneName")
+    .value.replace("GMT", "UTC");
+}
+function zoneCaption(value = Date.now()) {
+  return displayZone === EGYPT_ZONE
+    ? `توقيت مصر (${offsetCaption(value)})`
+    : `${displayZone} (${offsetCaption(value)})`;
+}
+function fillTimeZoneChoices(preferred) {
+  const country = countryCatalog.find(
+    (c) => c.country === $("#accountCountry").value,
+  );
+  const zones = country?.timeZones.filter(validTimeZone) || [];
+  $("#accountTimeZone").replaceChildren(
+    ...zones.map((zone) => {
+      const option = element("option", zone.replaceAll("_", " "));
+      option.value = zone;
+      return option;
+    }),
+  );
+  if (zones.includes(preferred)) $("#accountTimeZone").value = preferred;
+  $("#accountTimeZone").disabled = !displayPreferencesReady || !zones.length;
+}
+function applyDisplayPreferences(data) {
+  const previousZone = displayZone;
+  displayCountry = user?.role === "admin" ? "EG" : data.country || "";
+  displayZone =
+    user?.role === "admin"
+      ? EGYPT_ZONE
+      : validTimeZone(data.timeZone)
+        ? data.timeZone
+        : "UTC";
+  const zoneTitle = displayZone === EGYPT_ZONE ? "توقيت مصر" : displayZone;
+  $("#displayTimeNote").textContent =
+    `منطقة العرض: ${zoneTitle} · التوقيت الصيفي تلقائي`;
+  $("#historyTimeNote").textContent =
+    `التواريخ وفلاتر أيام النشر حسب ${zoneTitle}، والفرق عن UTC محسوب لكل تاريخ.`;
+  $("#timezoneSummary").textContent =
+    user?.role === "admin"
+      ? `حساب المدير ثابت على ${zoneCaption()}.`
+      : `توقيت عرض الصفقات: ${zoneCaption()}`;
+  $("#timezoneControls").hidden = user?.role === "admin";
+  $("#accountCountry").value = displayCountry;
+  fillTimeZoneChoices(displayZone);
+  $("#accountCountry").disabled =
+    !displayPreferencesReady || !countryCatalog.length;
+  $("#saveTimeZone").disabled =
+    !displayPreferencesReady || !countryCatalog.length;
+  if (
+    previousZone !== displayZone &&
+    user &&
+    active() &&
+    $("#chartContainer iframe")
+  )
+    loadChart();
+}
+async function loadCountryCatalog() {
+  try {
+    const data = await api("/api/time-zones");
+    countryCatalog = data.countries;
+    const names = new Intl.DisplayNames(["ar"], { type: "region" });
+    $("#accountCountry").replaceChildren(
+      element("option", "اختر بلدك"),
+      ...countryCatalog
+        .slice()
+        .sort((a, b) =>
+          names.of(a.country).localeCompare(names.of(b.country), "ar"),
+        )
+        .map((c) => {
+          const option = element("option", names.of(c.country));
+          option.value = c.country;
+          return option;
+        }),
+    );
+    $("#accountCountry").firstElementChild.value = "";
+    applyDisplayPreferences({ country: displayCountry, timeZone: displayZone });
+  } catch {
+    message(
+      "#timezoneMessage",
+      "تعذر تحميل قائمة البلدان. أعد تحميل الصفحة للمحاولة مجددًا.",
+    );
+  }
+}
+async function loadDisplayPreferences() {
+  const version = generation;
+  try {
+    const data =
+      user.role === "admin"
+        ? { country: "EG", timeZone: EGYPT_ZONE }
+        : await api("/api/preferences");
+    if (version !== generation) return;
+    displayPreferencesReady = true;
+    applyDisplayPreferences(data);
+    renderAccount();
+  } catch {
+    if (version === generation) {
+      displayPreferencesReady = true;
+      $("#accountCountry").disabled = !countryCatalog.length;
+      $("#saveTimeZone").disabled = !countryCatalog.length;
+      message(
+        "#timezoneMessage",
+        "تعذر تحميل توقيت الحساب. العرض مؤقتًا بتوقيت UTC؛ لم يتغير الاختيار المحفوظ.",
+      );
+    }
+  }
+}
 const notify = (text) => {
   clearTimeout(toastTimer);
   message("#toast", text);
@@ -211,6 +334,9 @@ function setSession(payload) {
   $("#checkTelegramGroup").disabled = false;
   user = payload?.user || null;
   csrf = payload?.csrf || "";
+  displayPreferencesReady = false;
+  applyDisplayPreferences({ country: "", timeZone: "UTC" });
+  message("#timezoneMessage", "");
   clearSignals();
   historyPage = 1;
   $("#historyForm").reset();
@@ -316,7 +442,7 @@ function loadChart() {
     theme:
       document.documentElement.dataset.theme === "ivory" ? "light" : "dark",
     style: "1",
-    timezone: "Etc/UTC",
+    timezone: displayZone === "UTC" ? "Etc/UTC" : displayZone,
   });
   iframe.src = `https://www.tradingview.com/widgetembed/?${params}`;
   iframe.title = "شارت الذهب OANDA:XAUUSD من TradingView";
@@ -439,12 +565,13 @@ function renderSignals() {
 function stamp(value, fallback = "غير مسجّل") {
   if (!Number.isFinite(value)) return element("span", fallback, "muted small");
   const iso = new Date(value).toISOString(),
+    local = zonedParts(value, displayZone),
     node = element("time", undefined, "date-stamp");
   node.dateTime = iso;
   node.dir = "ltr";
   node.append(
-    element("strong", iso.slice(0, 10)),
-    element("span", `${iso.slice(11, 19)} UTC`),
+    element("strong", local.date),
+    element("span", `${local.time} ${offsetCaption(value)}`),
   );
   return node;
 }
@@ -565,6 +692,7 @@ async function loadHistory() {
     page: String(historyPage),
     status: historyFilters.status,
     direction: historyFilters.direction,
+    timeZone: displayZone,
   });
   if (historyFilters.from) params.set("from", historyFilters.from);
   if (historyFilters.to) params.set("to", historyFilters.to);
@@ -821,6 +949,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
     });
     setSession(result);
     $("#loginDialog").close();
+    await loadDisplayPreferences();
     await refresh();
   } catch (err) {
     if (unavailable(err)) showServiceUnavailable(err);
@@ -1067,6 +1196,33 @@ $("#checkTelegramGroup").addEventListener("click", async () => {
   }
 });
 $("#year").textContent = new Date().getFullYear();
+$("#accountCountry").addEventListener("change", () => fillTimeZoneChoices());
+$("#timezoneForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const version = generation;
+  $("#saveTimeZone").disabled = true;
+  try {
+    const result = await api("/api/preferences", {
+      method: "PATCH",
+      data: {
+        country: $("#accountCountry").value,
+        timeZone: $("#accountTimeZone").value,
+      },
+    });
+    if (version !== generation) return;
+    applyDisplayPreferences(result);
+    historyPage = 1;
+    renderAccount();
+    loadChart();
+    message("#timezoneMessage", "تم حفظ البلد والتوقيت في حسابك.");
+    await refresh();
+  } catch (err) {
+    if (version === generation) message("#timezoneMessage", err.message);
+  } finally {
+    if (version === generation)
+      $("#saveTimeZone").disabled = !countryCatalog.length;
+  }
+});
 $("#siteTheme").addEventListener("change", () => {
   themeDirty = true;
 });
@@ -1112,6 +1268,7 @@ async function checkService() {
         { code: "SERVICE_RESPONSE_INVALID" },
       );
     setSession(result);
+    if (user) await loadDisplayPreferences();
     setServiceReady(true);
     $("#serviceNotice").hidden = true;
     if (user) await refresh();
@@ -1131,6 +1288,7 @@ function init() {
 }
 $("#retryService").addEventListener("click", init);
 void init();
+void loadCountryCatalog();
 void syncAppearance();
 setInterval(() => {
   if (!document.hidden) void syncAppearance();
