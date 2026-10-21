@@ -309,6 +309,11 @@ export async function cloudReadiness(env, fetcher = fetch) {
             REQUIRE_IS_NOT_DEFINED: /require is not defined/,
             DIRNAME_IS_NOT_DEFINED: /__dirname is not defined/,
             EXPORTS_IS_NOT_DEFINED: /exports is not defined/,
+            MODULE_IS_NOT_DEFINED: /module is not defined/,
+            GLOBAL_IS_NOT_DEFINED: /global is not defined/,
+            WINDOW_IS_NOT_DEFINED: /window is not defined/,
+            SELF_IS_NOT_DEFINED: /self is not defined/,
+            TEMPORAL_DEAD_ZONE: /Cannot access .+ before initialization/,
             CLASS_EXTENDS_UNDEFINED: /Class extends value undefined/,
           };
           runtimeDiagnostics.byteCount = text.length;
