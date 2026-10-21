@@ -1,12 +1,6 @@
 name: Activate WetaGold
 on:
   workflow_dispatch:
-  push:
-    branches: [feature/cloud-readiness]
-    paths:
-      - .github/workflows/cloud-activate.yml
-      - scripts/cloud-activate.js
-      - test/cloud-activate.test.js
 permissions:
   contents: read
 concurrency:
@@ -16,8 +10,8 @@ jobs:
   activate:
     if: >-
       github.repository == 'mweta66/oldgold' &&
-      ((github.event_name == 'push' && github.ref == 'refs/heads/feature/cloud-readiness') ||
-       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

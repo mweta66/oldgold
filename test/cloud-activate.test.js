@@ -51,7 +51,7 @@ function fixture(options = {}) {
     masks = [];
   let initialized = false;
   let savedEnv = [];
-  let framework = "express";
+  let framework = "node";
   const fetcher = async (input, init) => {
     const url = new URL(input),
       body = init.body ? JSON.parse(init.body) : undefined;
@@ -232,7 +232,7 @@ test("activation connects only matching production targets, preserves an existin
   assert.equal(r.telegramWebhook, true);
   assert.equal(r.retryCron, true);
   assert.equal(r.schemaInitialized, false);
-  assert.equal(r.previousFramework, "express");
+  assert.equal(r.previousFramework, "node");
   const write = f.calls.find((c) => c.url.pathname.endsWith("/env"));
   assert.equal(write.body.length, 9);
   for (const v of write.body) assert.deepEqual(v.target, ["production"]);
@@ -262,7 +262,7 @@ test("activation connects only matching production targets, preserves an existin
   assert(f.masks.includes(webhook));
 });
 
-test("Vercel explicitly treats the browser app as static files plus API, not an Express entrypoint", () => {
+test("Vercel explicitly treats the browser app as static files plus API, not a Node server entrypoint", () => {
   const config = JSON.parse(
     readFileSync(new URL("../vercel.json", import.meta.url), "utf8"),
   );
