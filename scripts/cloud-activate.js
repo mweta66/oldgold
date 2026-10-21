@@ -394,6 +394,9 @@ export async function activateCloud(
     stage("vault-read");
     const vault = await query(
       "select (select decrypted_secret from vault.decrypted_secrets where name='wetagold_cron_secret') as cron_secret, (select decrypted_secret from vault.decrypted_secrets where name='wetagold_webhook_secret') as webhook_secret;",
+      // read_only=true uses a restricted database role which cannot read Vault.
+      // This is a SELECT, using the authorized management role, never logged.
+      false,
     );
     const cronSecret = vault[0]?.cron_secret;
     const webhookSecret = vault[0]?.webhook_secret;
@@ -640,6 +643,7 @@ export async function activateCloud(
     );
     const existingJobs = await query(
       "select command from cron.job where jobname='wetagold-telegram'",
+      false,
     );
     assert(
       Array.isArray(existingJobs) && existingJobs.length <= 1,

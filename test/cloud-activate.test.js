@@ -90,8 +90,10 @@ function fixture(options = {}) {
               history_ready: true,
             },
           ]);
-        if (sql.startsWith("select (select decrypted_secret"))
+        if (sql.startsWith("select (select decrypted_secret")) {
+          assert.equal(body.read_only, false);
           return json([{ cron_secret: cron, webhook_secret: webhook }]);
+        }
         if (sql.includes("select command from cron.job"))
           return json(
             options.existingCron ? [{ command: options.existingCron }] : [],
