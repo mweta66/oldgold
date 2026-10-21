@@ -74,6 +74,19 @@ export function productionOrigin(domains) {
   return `https://${hostname.toLowerCase()}`;
 }
 
+export function vaultSetupSql(origin, cronCandidate, webhookCandidate) {
+  return `begin;
+select pg_advisory_xact_lock(910726432);
+do $guard$ begin
+  if exists(select 1 from vault.decrypted_secrets where name='wetagold_site_origin' and decrypted_secret<>${sqlString(origin)}) then raise exception 'WG_ORIGIN_MISMATCH'; end if;
+  if exists(select name from vault.decrypted_secrets where name in ('wetagold_site_origin','wetagold_cron_secret','wetagold_webhook_secret') group by name having count(*)>1) then raise exception 'WG_VAULT_DUPLICATE'; end if;
+end; $guard$;
+select vault.create_secret(${sqlString(origin)},'wetagold_site_origin') where not exists(select 1 from vault.decrypted_secrets where name='wetagold_site_origin');
+select vault.create_secret(${sqlString(cronCandidate)},'wetagold_cron_secret') where not exists(select 1 from vault.decrypted_secrets where name='wetagold_cron_secret');
+select vault.create_secret(${sqlString(webhookCandidate)},'wetagold_webhook_secret') where not exists(select 1 from vault.decrypted_secrets where name='wetagold_webhook_secret');
+commit;`;
+}
+
 export async function activateCloud(
   env,
   {
@@ -332,25 +345,17 @@ export async function activateCloud(
         service.length > 20,
       "PROJECT_API_KEYS_UNAVAILABLE",
     );
+    stage("vault-extension");
+    await query(
+      "create extension if not exists supabase_vault with schema vault;",
+      false,
+    );
     stage("server-secrets");
     const cronCandidate = randomBytes(32).toString("hex");
     const webhookCandidate = randomBytes(32).toString("hex");
     mask(cronCandidate);
     mask(webhookCandidate);
-    await query(
-      `begin;
-create extension if not exists supabase_vault with schema vault;
-select pg_advisory_xact_lock(910726432);
-do $guard$ begin
-  if exists(select 1 from vault.decrypted_secrets where name='wetagold_site_origin' and decrypted_secret<>${sqlString(origin)}) then raise exception 'WG_ORIGIN_MISMATCH'; end if;
-  if exists(select name from vault.decrypted_secrets where name in ('wetagold_site_origin','wetagold_cron_secret','wetagold_webhook_secret') group by name having count(*)>1) then raise exception 'WG_VAULT_DUPLICATE'; end if;
-end $guard$;
-select vault.create_secret(${sqlString(origin)},'wetagold_site_origin') where not exists(select 1 from vault.decrypted_secrets where name='wetagold_site_origin');
-select vault.create_secret(${sqlString(cronCandidate)},'wetagold_cron_secret') where not exists(select 1 from vault.decrypted_secrets where name='wetagold_cron_secret');
-select vault.create_secret(${sqlString(webhookCandidate)},'wetagold_webhook_secret') where not exists(select 1 from vault.decrypted_secrets where name='wetagold_webhook_secret');
-commit;`,
-      false,
-    );
+    await query(vaultSetupSql(origin, cronCandidate, webhookCandidate), false);
     const vault = await query(
       "select (select decrypted_secret from vault.decrypted_secrets where name='wetagold_cron_secret') as cron_secret, (select decrypted_secret from vault.decrypted_secrets where name='wetagold_webhook_secret') as webhook_secret;",
     );

@@ -169,9 +169,8 @@ p {
   margin-bottom: 12px;
 }
 button {
-  transition:
-    background 0.2s,
-    transform 0.2s;
+  /* Theme foreground/background pairs must change together for contrast. */
+  transition: transform 0.2s;
 }
 .gold,
 .text-link {
@@ -268,6 +267,9 @@ nav {
 }
 .primary-btn:hover {
   background: color-mix(in srgb, var(--gold) 85%, white);
+}
+:root[data-theme="ivory"] .primary-btn:hover {
+  background: color-mix(in srgb, var(--gold) 85%, black);
 }
 .secondary-btn {
   background: var(--panel-high);

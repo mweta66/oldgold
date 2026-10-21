@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import { migrationBatch } from "../scripts/cloud-activate.js";
+import { migrationBatch, vaultSetupSql } from "../scripts/cloud-activate.js";
 
 test("fresh cloud activation applies all three real migrations atomically and keeps migration metadata private", async (t) => {
   const db = new PGlite();
@@ -44,5 +44,53 @@ test("fresh cloud activation applies all three real migrations atomically and ke
     (await db.query("select count(*)::int as count from wg_signals")).rows[0]
       .count,
     0,
+  );
+});
+
+test("Vault setup SQL executes, is repeatable, preserves existing keys and refuses a changed origin", async (t) => {
+  const db = new PGlite();
+  t.after(() => db.close());
+  // PGlite lacks the Supabase Vault extension. Model its SQL interface, while
+  // running the real setup transaction/DO guards on PostgreSQL.
+  await db.exec(`create schema vault;
+create table vault.decrypted_secrets(id uuid primary key default gen_random_uuid(),name text,decrypted_secret text);
+create function vault.create_secret(secret text,secret_name text) returns uuid language plpgsql as $$
+declare created uuid; begin insert into vault.decrypted_secrets(name,decrypted_secret) values(secret_name,secret) returning id into created; return created; end; $$;`);
+  await db.exec(
+    vaultSetupSql("https://wetagold.example", "c".repeat(64), "w".repeat(64)),
+  );
+  await db.exec(
+    vaultSetupSql(
+      "https://wetagold.example",
+      "different-unused-cron",
+      "different-unused-webhook",
+    ),
+  );
+  const values = (
+    await db.query(
+      "select name,decrypted_secret from vault.decrypted_secrets order by name",
+    )
+  ).rows;
+  assert.equal(values.length, 3);
+  assert.equal(
+    values.find((v) => v.name === "wetagold_cron_secret").decrypted_secret,
+    "c".repeat(64),
+  );
+  assert.equal(
+    values.find((v) => v.name === "wetagold_webhook_secret").decrypted_secret,
+    "w".repeat(64),
+  );
+  await assert.rejects(
+    db.exec(vaultSetupSql("https://different.example", "new", "new")),
+    /WG_ORIGIN_MISMATCH/,
+  );
+  await db.exec("rollback");
+  assert.equal(
+    (
+      await db.query(
+        "select count(*)::int as count from vault.decrypted_secrets",
+      )
+    ).rows[0].count,
+    3,
   );
 });
