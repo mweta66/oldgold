@@ -51,6 +51,7 @@ function fixture(options = {}) {
     masks = [];
   let initialized = false;
   let savedEnv = [];
+  let framework = "express";
   const fetcher = async (input, init) => {
     const url = new URL(input),
       body = init.body ? JSON.parse(init.body) : undefined;
@@ -115,8 +116,14 @@ function fixture(options = {}) {
       if (url.pathname === "/v2/teams") return json({ teams: [] });
       if (url.pathname === "/v9/projects")
         return json({ projects: [{ id: "prj_Test", name: "wetagold" }] });
+      if (url.pathname === "/v9/projects/prj_Test" && init.method === "PATCH") {
+        assert.deepEqual(body, { framework: null });
+        framework = null;
+        return json({ framework });
+      }
       if (url.pathname === "/v9/projects/prj_Test")
         return json({
+          framework,
           id: "prj_Test",
           name: "wetagold",
           link: { type: "github", repoId: "1427298744" },
@@ -220,6 +227,7 @@ test("activation connects only matching production targets, preserves an existin
   assert.equal(r.telegramWebhook, true);
   assert.equal(r.retryCron, true);
   assert.equal(r.schemaInitialized, false);
+  assert.equal(r.previousFramework, "express");
   const write = f.calls.find((c) => c.url.pathname.endsWith("/env"));
   assert.equal(write.body.length, 9);
   for (const v of write.body) assert.deepEqual(v.target, ["production"]);
@@ -247,6 +255,14 @@ test("activation connects only matching production targets, preserves an existin
     assert(!JSON.stringify(r).includes(secret));
   assert(f.masks.includes(cron));
   assert(f.masks.includes(webhook));
+});
+
+test("Vercel explicitly treats the browser app as static files plus API, not an Express entrypoint", () => {
+  const config = JSON.parse(
+    readFileSync(new URL("../vercel.json", import.meta.url), "utf8"),
+  );
+  assert.equal(config.framework, null);
+  assert.equal(config.outputDirectory, "dist");
 });
 
 test("fresh schema is initialized as one transaction; missing admin secrets do not create a weak default account", async () => {

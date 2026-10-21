@@ -457,6 +457,22 @@ export async function activateCloud(
       external_email_enabled: true,
       ...(initialize ? { site_url: origin } : {}),
     });
+    stage("runtime-config");
+    report.previousFramework = ["express", "nextjs", "vite", "node"].includes(
+      detail.framework,
+    )
+      ? detail.framework
+      : detail.framework === null
+        ? "other"
+        : "custom";
+    await vercel(`/v9/projects/${detail.id}${suffix}`, "PATCH", {
+      framework: null,
+    });
+    const runtimeProject = await vercel(`/v9/projects/${detail.id}${suffix}`);
+    assert(
+      runtimeProject.framework === null,
+      "VERCEL_FRAMEWORK_OVERRIDE_REJECTED",
+    );
     stage("deployment");
     const deployment = await vercel(`/v13/deployments${suffix}`, "POST", {
       name: detail.name,
