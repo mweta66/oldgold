@@ -317,6 +317,21 @@ export async function cloudReadiness(env, fetcher = fetch) {
             CLASS_EXTENDS_UNDEFINED: /Class extends value undefined/,
           };
           runtimeDiagnostics.byteCount = text.length;
+          // A short JS symbol is diagnostic metadata, not a log line. Exclude
+          // credential prefixes, high-entropy hex strings and configured values.
+          const identifier =
+            /ReferenceError:\s+([A-Za-z_$][\w$]{0,31}) is not defined\b/.exec(
+              text,
+            )?.[1];
+          runtimeDiagnostics.referenceIdentifier =
+            identifier &&
+            !/^(?:sbp_|vcp_|sb_secret_|sb_publishable_|eyJ)/.test(identifier) &&
+            !/^[a-f0-9]{20,}$/i.test(identifier) &&
+            !Object.values(env).some(
+              (v) => typeof v === "string" && v.includes(identifier),
+            )
+              ? identifier
+              : null;
           runtimeDiagnostics.categories = Object.entries(patterns)
             .filter(([, pattern]) => pattern.test(text))
             .map(([code]) => code);
@@ -328,6 +343,9 @@ export async function cloudReadiness(env, fetcher = fetch) {
           runtimeDiagnostics,
           productionDeploymentReady:
             project.targets?.production?.readyState === "READY",
+          nodeVersion: /^\d{2}\.x$/.test(project.nodeVersion || "")
+            ? project.nodeVersion
+            : null,
           platformProtection: [
             "all",
             "preview",
