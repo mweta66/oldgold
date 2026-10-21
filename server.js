@@ -22,6 +22,13 @@ import { createBackups } from "./lib/backups.js";
 import { createCloudApp } from "./lib/cloud-server.js";
 import { validTheme } from "./lib/themes.js";
 import { historyQuery } from "./lib/history.js";
+import { operationsReport, releaseId } from "./lib/operations.js";
+import { memberQuery } from "./lib/member-query.js";
+import {
+  validateTargets,
+  storedTargets,
+  storedTargetsHit,
+} from "./lib/targets.js";
 import {
   timeZoneCountries,
   validPreferences,
@@ -211,6 +218,8 @@ export async function createApp(options = {}) {
     entry: row.entry,
     stop: row.stop,
     target: row.target,
+    targets: storedTargets(row),
+    targetsHit: storedTargetsHit(row),
     status: row.status,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
@@ -230,7 +239,10 @@ export async function createApp(options = {}) {
       });
       res.end(JSON.stringify(payload));
     };
-    if (method === "GET" && path === "/api/health") return send({ ok: true });
+    if (method === "GET" && path === "/api/health") {
+      db.prepare("SELECT 1 FROM settings LIMIT 1").get();
+      return send({ ok: true, provider: "sqlite", release: releaseId(env) });
+    }
     if (method === "GET" && path === "/api/time-zones")
       return send({ countries: timeZoneCountries });
     if (method === "GET" && path === "/api/appearance")
@@ -474,14 +486,38 @@ export async function createApp(options = {}) {
     }
     if (!path.startsWith("/api/admin/")) throw error(404, "المسار غير موجود.");
     const { user: admin } = requireAdmin(req);
+    if (method === "GET" && path === "/api/admin/diagnostics") {
+      return send(
+        operationsReport(
+          env,
+          [{ name: "sqlite", ready: true }],
+          db
+            .prepare(
+              "SELECT id,signal_id,state,attempts,next_at FROM outbox ORDER BY id DESC LIMIT 20",
+            )
+            .all(),
+          now(),
+        ),
+      );
+    }
     if (method === "GET" && path === "/api/admin/research/bybit")
       return send(await bybitResearch());
     if (method === "GET" && path === "/api/admin/overview") {
+      const members = memberQuery(url.searchParams);
+      const pattern = `%${members.search.replace(/[\\%_]/g, "\\$&")}%`;
+      const total = db
+        .prepare(
+          "SELECT count(*) AS total FROM users WHERE role='member' AND email LIKE ? ESCAPE '\\'",
+        )
+        .get(pattern).total;
       return send({
         users: db
-          .prepare("SELECT * FROM users ORDER BY id DESC")
-          .all()
+          .prepare(
+            "SELECT * FROM users WHERE role='member' AND email LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ? OFFSET ?",
+          )
+          .all(pattern, members.pageSize, (members.page - 1) * members.pageSize)
           .map((account) => publicUser(account, now())),
+        usersPagination: { ...members, total },
         telegram: {
           configured: telegram.configured,
           adminGroupConfigured: Boolean(groupChatId(env)),
@@ -621,6 +657,7 @@ export async function createApp(options = {}) {
       const data = await bodyOf(req),
         quoteAt = timestamp(data.quoteAt);
       const prices = [data.entry, data.stop, data.target, data.referencePrice];
+      const targets = validateTargets(data);
       if (
         !prices.every(
           (n) =>
@@ -678,7 +715,7 @@ export async function createApp(options = {}) {
           );
         const result = db
           .prepare(
-            "INSERT INTO signals(request_id,symbol,direction,entry,stop,target,created_at,expires_at,quote_at,reference_price,author_id) VALUES(?,'OANDA:XAUUSD',?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO signals(request_id,symbol,direction,entry,stop,target,created_at,expires_at,quote_at,reference_price,author_id,targets) VALUES(?,'OANDA:XAUUSD',?,?,?,?,?,?,?,?,?,?)",
           )
           .run(
             data.requestId,
@@ -691,6 +728,7 @@ export async function createApp(options = {}) {
             quoteAt,
             data.referencePrice,
             admin.id,
+            JSON.stringify(targets),
           );
         const id = Number(result.lastInsertRowid);
         db.prepare(
@@ -722,6 +760,48 @@ export async function createApp(options = {}) {
       return send(result, result.duplicate ? 200 : 201);
     }
     const signalRoute = /^\/api\/admin\/signals\/(\d+)$/.exec(path);
+    const targetRoute = /^\/api\/admin\/signals\/(\d+)\/target$/.exec(path);
+    if (method === "PATCH" && targetRoute) {
+      const data = await bodyOf(req),
+        id = Number(targetRoute[1]);
+      if (
+        !Number.isSafeInteger(data.targetIndex) ||
+        data.targetIndex < 1 ||
+        data.targetIndex > 3
+      )
+        throw error(400, "رقم الهدف غير صحيح.");
+      const result = transaction(db, () => {
+        const signal = db.prepare("SELECT * FROM signals WHERE id=?").get(id);
+        if (!signal) throw error(404, "الإشارة غير موجودة.");
+        const targets = storedTargets(signal),
+          hit = storedTargetsHit(signal);
+        if (data.targetIndex > targets.length)
+          throw error(400, "الهدف غير موجود.");
+        if (data.targetIndex <= hit) return { ok: true, duplicate: true };
+        if (signal.status !== "open" || data.targetIndex !== hit + 1)
+          throw error(409, "افتح الإشارة وسجّل الأهداف بالترتيب دون تخطّي.");
+        const final = data.targetIndex === targets.length;
+        db.prepare(
+          "UPDATE signals SET targets_hit=?,status=?,closed_at=?,telegram_group_chat_id=? WHERE id=?",
+        ).run(
+          data.targetIndex,
+          final ? "target" : "open",
+          final ? now() : null,
+          telegram.configured ? groupChatId(env) : null,
+          id,
+        );
+        recordSignalEvent(
+          db,
+          db.prepare("SELECT * FROM signals WHERE id=?").get(id),
+          targets.length > 1 ? `tp${data.targetIndex}` : "status",
+          now(),
+        );
+        audit(admin, `signal.tp${data.targetIndex}`, id);
+        return { ok: true, duplicate: false };
+      });
+      void telegram.flush();
+      return send(result);
+    }
     if (method === "PATCH" && signalRoute) {
       const data = await bodyOf(req),
         id = Number(signalRoute[1]);
@@ -735,9 +815,13 @@ export async function createApp(options = {}) {
         if (!signal) throw error(404, "الإشارة غير موجودة.");
         if (!transitions[signal.status]?.includes(data.status))
           throw error(409, "تغيير الحالة غير مسموح.");
+        if (data.status === "target" && storedTargets(signal).length > 1)
+          throw error(409, "سجّل الأهداف المتعددة بالترتيب من أزرار TP.");
         db.prepare(
           "UPDATE signals SET status=?,opened_at=CASE WHEN ?='open' THEN coalesce(opened_at,?) ELSE opened_at END,closed_at=CASE WHEN ? IN ('target','stopped','expired','cancelled') THEN ? ELSE closed_at END WHERE id=?",
         ).run(data.status, data.status, now(), data.status, now(), id);
+        if (data.status === "target")
+          db.prepare("UPDATE signals SET targets_hit=1 WHERE id=?").run(id);
         db.prepare(
           "UPDATE signals SET telegram_group_chat_id=? WHERE id=?",
         ).run(telegram.configured ? groupChatId(env) : null, id);
@@ -761,6 +845,7 @@ export async function createApp(options = {}) {
     ["/admin", ["index.html", "text/html; charset=utf-8"]],
     ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
     ["/time-zones.js", ["time-zones.js", "text/javascript; charset=utf-8"]],
+    ["/trade-export.js", ["trade-export.js", "text/javascript; charset=utf-8"]],
     ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
     ["/icon.svg", ["icon.svg", "image/svg+xml"]],
     ["/assets/wetagold-mark.png", ["assets/wetagold-mark.png", "image/png"]],

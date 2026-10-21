@@ -460,7 +460,7 @@ nav {
 }
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 22px;
 }
 .chart {

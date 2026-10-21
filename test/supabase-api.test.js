@@ -1,315 +1,203 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createCloudApp } from "../lib/cloud-server.js";
 import { digest } from "../lib/crypto.js";
+import { fixture, ADMIN, MEMBER, PASSWORD } from "./supabase-helpers.js";
 
-const ADMIN = "00000000-0000-4000-8000-000000000001";
-const MEMBER = "00000000-0000-4000-8000-000000000002";
-const PASSWORD = "test-provider-password";
-const json = (value, status = 200) =>
-  new Response(JSON.stringify(value), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-
-// Only the provider HTTP boundary is simulated. Requests use the real Supabase SDK.
-// Actual SQL, grants, RLS, quotas and RPC validation are tested in supabase-db.test.js.
-async function fixture(t, overrides = {}, marketOptions = {}) {
-  const env = {
-    SUPABASE_URL: "https://project.example.test",
-    SUPABASE_ANON_KEY: "test-public-key",
-    SUPABASE_SERVICE_ROLE_KEY: "test-server-secret",
-    TELEGRAM_BOT_TOKEN: "test-bot-secret",
-    TELEGRAM_WEBHOOK_SECRET: "test-hook-secret",
-    CRON_SECRET: "test-job-secret",
-    ...overrides,
-  };
-  const tables = {
-    wg_profiles: [ADMIN, MEMBER].map((id, n) => ({
-      id,
-      email: `${n ? "member" : "admin"}@example.test`,
-      role: n ? "member" : "admin",
-      active: true,
-      must_change_password: false,
-      quota: n ? 2 : 0,
-      used: 0,
-      expires_at: n ? new Date(Date.now() + 86400000).toISOString() : null,
-      telegram_chat_id: n ? "1001" : null,
-    })),
-    wg_sessions: [],
-    wg_signals: [],
-    wg_allocations: [],
-    wg_outbox: [],
-    wg_signal_events: [],
-    wg_audit: [],
-    wg_settings: [{ id: 1, theme: "gold", paused: false }],
-    wg_telegram_links: [],
-  };
-  const calls = [],
-    sent = [];
-  const userMetadata = new Map();
-  const telegramPolicy = { public: false };
-  let unavailable = false,
-    authUnavailable = false;
-  const matches = (row, url) =>
-    [...url.searchParams].every(([key, value]) => {
-      if (["select", "order", "limit", "on_conflict"].includes(key))
-        return true;
-      const [op, ...parts] = value.split("."),
-        expected = parts.join(".");
-      if (op === "eq") return String(row[key]) === expected;
-      if (op === "gt") return row[key] > expected;
-      if (op === "gte") return row[key] >= expected;
-      if (op === "lte") return row[key] <= expected;
-      if (op === "in")
-        return expected.slice(1, -1).split(",").includes(String(row[key]));
-      throw new Error(`Unsupported provider filter: ${op}`);
-    });
-  const fetchImpl = async (input, options = {}) => {
-    const url = new URL(input),
-      method = options.method || "GET",
-      headers = new Headers(options.headers);
-    const data = options.body ? JSON.parse(options.body) : undefined;
-    calls.push({ path: url.pathname, method, data, headers });
-    if (url.hostname === "api.telegram.org") {
-      if (url.pathname.endsWith("sendMessage")) sent.push(data);
-      const method = url.pathname.split("/").pop();
-      if (method === "getChat")
-        return json({
-          ok: true,
-          result: {
-            id: Number(data.chat_id),
-            type: "supergroup",
-            title: "Private signals",
-            permissions: { can_invite_users: false },
-            ...(telegramPolicy.public ? { username: "public-group" } : {}),
-          },
-        });
-      if (method === "getChatAdministrators")
-        return json({
-          ok: true,
-          result: [{ status: "creator", user: { id: 999 } }],
-        });
-      if (method === "getChatMember")
-        return json({
-          ok: true,
-          result: {
-            status: "administrator",
-            user: { id: 77 },
-            can_invite_users: false,
-            can_restrict_members: false,
-          },
-        });
-      return json({
-        ok: true,
-        result: { id: 77, username: "test_wetagold_bot" },
-      });
-    }
-    assert.equal(url.origin, env.SUPABASE_URL);
-    if (url.pathname === "/auth/v1/token") {
-      assert.equal(headers.get("apikey"), env.SUPABASE_ANON_KEY);
-      if (authUnavailable)
-        return json({ message: "internal test-provider failure" }, 503);
-      const user = tables.wg_profiles.find((p) => p.email === data.email);
-      if (!user || data.password !== PASSWORD)
-        return json({ message: "Invalid login credentials" }, 400);
-      const claims = Buffer.from(
-        JSON.stringify({
-          sub: user.id,
-          exp: Math.floor(Date.now() / 1000) + 3600,
-        }),
-      ).toString("base64url");
-      return json({
-        access_token: `eyJhbGciOiJIUzI1NiJ9.${claims}.test-signature`,
-        refresh_token: "test-refresh-token",
-        token_type: "bearer",
-        expires_in: 3600,
-        user: {
-          id: user.id,
-          email: user.email,
-          aud: "authenticated",
-          role: "authenticated",
-          app_metadata: { role: "admin" },
-          created_at: new Date().toISOString(),
-        },
-      });
-    }
-    if (url.pathname === "/auth/v1/logout")
-      return new Response(null, { status: 204 });
-    if (url.pathname === "/auth/v1/user")
-      return json({ id: ADMIN, email: "admin@example.test" });
-    if (url.pathname.startsWith("/auth/v1/admin/users")) {
-      assert.equal(headers.get("apikey"), env.SUPABASE_SERVICE_ROLE_KEY);
-      if (method === "POST")
-        return json({ id: crypto.randomUUID(), email: data.email });
-      if (method === "PUT" && data.user_metadata) {
-        const id = url.pathname.split("/").pop();
-        userMetadata.set(id, {
-          ...userMetadata.get(id),
-          ...data.user_metadata,
-        });
-        return json({ id, user_metadata: userMetadata.get(id) });
-      }
-      if (method === "GET") {
-        const id = url.pathname.split("/").pop();
-        return json({ id, user_metadata: userMetadata.get(id) || {} });
-      }
-      if (method === "PUT")
-        return json({
-          id: url.pathname.split("/").pop(),
-          email: "member@example.test",
-        });
-      return json({});
-    }
-    if (unavailable)
-      return json(
-        {
-          code: "42P01",
-          message: "private database diagnostic, test-server-secret",
-        },
-        404,
-      );
-    assert.equal(headers.get("apikey"), env.SUPABASE_SERVICE_ROLE_KEY);
-    if (url.pathname.startsWith("/rest/v1/rpc/")) {
-      const name = url.pathname.split("/").pop();
-      if (name === "wg_settings_update")
-        Object.assign(tables.wg_settings[0], data.p_data);
-      if (name === "wg_member_update")
-        Object.assign(
-          tables.wg_profiles.find((p) => p.id === data.p_id),
-          {
-            quota: data.p_quota,
-            expires_at: data.p_expires,
-            active: data.p_active,
-          },
-        );
-      if (name === "wg_publish") return json({ id: 1, recipients: 1 });
-      if (name === "wg_history") {
-        const available = tables.wg_signals.filter(
-          (s) =>
-            data.p_user === ADMIN ||
-            tables.wg_allocations.some(
-              (a) => a.user_id === data.p_user && a.signal_id === s.id,
-            ),
-        );
-        const rows = available
-          .filter(
-            (s) =>
-              (data.p_status === "all" || s.status === data.p_status) &&
-              (data.p_direction === "all" ||
-                s.direction === data.p_direction) &&
-              (!data.p_from || s.created_at >= data.p_from) &&
-              (!data.p_to || s.created_at < data.p_to),
-          )
-          .sort(
-            (a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id,
-          );
-        return json({
-          available: available.length,
-          total: rows.length,
-          page: data.p_page,
-          pageSize: 20,
-          signals: rows.slice((data.p_page - 1) * 20, data.p_page * 20),
-        });
-      }
-      if (name === "wg_get_signals")
-        return json(
-          tables.wg_signals.filter(
-            (s) =>
-              data.p_user === ADMIN ||
-              tables.wg_allocations.some(
-                (a) => a.user_id === data.p_user && a.signal_id === s.id,
-              ),
-          ),
-        );
-      if (name === "wg_delivery_counts") return json([]);
-      if (name === "wg_claim_delivery") {
-        const rows = tables.wg_outbox.filter((r) => r.state === "pending");
-        rows.forEach((r) => {
-          r.state = "processing";
-          r.lease_id = "test-lease";
-        });
-        return json(rows);
-      }
-      return json(name === "wg_link_telegram" ? true : null);
-    }
-    const name = url.pathname.split("/").pop(),
-      rows = tables[name];
-    assert.ok(rows, `Unexpected provider endpoint ${url.pathname}`);
-    if (method === "POST") {
-      rows.push(data);
-      return new Response(null, { status: 201 });
-    }
-    if (method === "PATCH") {
-      rows
-        .filter((r) => matches(r, url))
-        .forEach((r) => Object.assign(r, data));
-      return new Response(null, { status: 204 });
-    }
-    if (method === "DELETE") {
-      tables[name] = rows.filter((r) => !matches(r, url));
-      return new Response(null, { status: 204 });
-    }
-    const filtered = rows.filter((r) => matches(r, url));
-    return json(
-      headers.get("accept") === "application/vnd.pgrst.object+json"
-        ? filtered[0]
-        : filtered,
+test("Supabase target updates require admin and validated ordinal; public signal/history serializes numeric targets only to allocated members", async (t) => {
+  const f = await fixture(t, { TELEGRAM_GROUP_CHAT_ID: "-1001" });
+  const admin = await f.login(),
+    member = await f.login("member@example.test");
+  const route = "/api/admin/signals/1/target";
+  assert.equal(
+    (
+      await f.request(route, {
+        method: "PATCH",
+        auth: member,
+        data: { targetIndex: 1 },
+      })
+    ).status,
+    403,
+  );
+  for (const targetIndex of [0, 4, 1.5, "1", null])
+    assert.equal(
+      (
+        await f.request(route, {
+          method: "PATCH",
+          auth: admin,
+          data: { targetIndex },
+        })
+      ).status,
+      400,
     );
-  };
-  const app = createCloudApp(env, { fetchImpl, ...marketOptions });
-  await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
-  t.after(() => app.close());
-  const origin = `http://127.0.0.1:${app.server.address().port}`;
-  const request = async (
-    path,
-    { method = "GET", data, auth, headers = {} } = {},
-  ) => {
-    const response = await fetch(origin + path, {
-      method,
-      headers: {
-        origin,
-        "content-type": "application/json",
-        ...(auth ? { cookie: auth.cookie, "x-csrf-token": auth.csrf } : {}),
-        ...headers,
-      },
-      ...(method === "GET" ? {} : { body: JSON.stringify(data || {}) }),
+  assert.equal(
+    (
+      await f.request(route, {
+        method: "PATCH",
+        auth: admin,
+        data: { targetIndex: 2 },
+      })
+    ).body.ok,
+    true,
+  );
+  const args = f.calls.find((c) => c.path.endsWith("/wg_target_hit")).data;
+  assert.deepEqual(args, {
+    p_actor: ADMIN,
+    p_id: 1,
+    p_index: 2,
+    p_group_chat: "-1001",
+  });
+  const stamp = new Date().toISOString();
+  f.tables.wg_signals.push({
+    id: 1,
+    symbol: "OANDA:XAUUSD",
+    direction: "buy",
+    entry: 100,
+    stop: 99,
+    target: 103,
+    targets: ["101", "102", "103"],
+    targets_hit: 1,
+    status: "open",
+    created_at: stamp,
+    quote_at: stamp,
+    reference_price: 100,
+    expires_at: new Date(Date.now() + 900000).toISOString(),
+    opened_at: stamp,
+    closed_at: null,
+    request_id: "private-request",
+    author_id: ADMIN,
+  });
+  assert.equal(
+    (await f.request("/api/signals", { auth: member })).body.signals.length,
+    0,
+  );
+  f.tables.wg_allocations.push({ user_id: MEMBER, signal_id: 1 });
+  const publicRow = (await f.request("/api/signals", { auth: member })).body
+    .signals[0];
+  assert.deepEqual(publicRow.targets, [101, 102, 103]);
+  assert.equal(publicRow.targetsHit, 1);
+  assert.doesNotMatch(JSON.stringify(publicRow), /private-request|author_id/);
+});
+
+test("health checks all required schema tables, diagnostics stay private and distinguish configuration from verification", async (t) => {
+  const f = await fixture(t, { VERCEL_GIT_COMMIT_SHA: "a".repeat(40) });
+  const admin = await f.login();
+  const member = await f.login("member@example.test");
+  assert.equal((await f.request("/api/admin/diagnostics")).status, 401);
+  assert.equal(
+    (await f.request("/api/admin/diagnostics", { auth: member })).status,
+    403,
+  );
+  assert.equal((await f.request("/api/health")).body.release, "a".repeat(40));
+  f.failTable("wg_signal_events");
+  const health = await f.request("/api/health");
+  assert.equal(health.status, 503);
+  assert.equal(health.body.code, "SUPABASE_SCHEMA_MISSING");
+  for (const code of ["42703", "PGRST204"]) {
+    f.failTable("wg_signals", code);
+    const missingColumn = await f.request("/api/health");
+    assert.equal(missingColumn.status, 503);
+    assert.equal(missingColumn.body.code, "SUPABASE_SCHEMA_MISSING");
+    assert.doesNotMatch(JSON.stringify(missingColumn.body), /private-test/);
+  }
+  const result = await f.request("/api/admin/diagnostics", { auth: admin });
+  assert.equal(result.status, 200);
+  assert.equal(
+    result.body.checks.find((c) => c.name === "wg_signal_events").ready,
+    false,
+  );
+  assert.equal(result.body.telegram.schedulerVerified, false);
+  assert.equal(result.body.market.automaticTracking, false);
+  assert.doesNotMatch(
+    JSON.stringify(result.body),
+    /private-test|secret|destination|telegram_chat_id/,
+  );
+  f.failAuth();
+  const authFailure = await f.request("/api/admin/diagnostics", {
+    auth: admin,
+  });
+  assert.equal(
+    authFailure.body.checks.find((c) => c.name === "auth").ready,
+    false,
+  );
+});
+
+test("Supabase accounts use counted server-side pages instead of silently truncating at the provider row limit", async (t) => {
+  const f = await fixture(t);
+  const admin = await f.login();
+  for (let n = 0; n < 1005; n++)
+    f.tables.wg_profiles.push({
+      ...f.tables.wg_profiles[1],
+      id: `test-member-${n}`,
+      email: `paged${n}@example.test`,
     });
-    return {
-      status: response.status,
-      headers: response.headers,
-      body: await response.json(),
-    };
+  const first = await f.request("/api/admin/overview", { auth: admin });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.users.length, 20);
+  assert.equal(first.body.usersPagination.total, 1006);
+  const last = await f.request("/api/admin/overview?usersPage=51", {
+    auth: admin,
+  });
+  assert.equal(last.body.users.length, 6);
+  assert.equal(last.body.usersPagination.total, 1006);
+  const search = await f.request("/api/admin/overview?usersSearch=paged1004", {
+    auth: admin,
+  });
+  assert.equal(search.body.users.length, 1);
+  assert.equal(search.body.users[0].email, "paged1004@example.test");
+  assert.equal(
+    (await f.request("/api/admin/overview?usersPage=-1", { auth: admin }))
+      .status,
+    400,
+  );
+});
+
+test("Supabase Telegram rate limits persist the provider retry window without returning private descriptions", async (t) => {
+  const f = await fixture(t);
+  const stamp = new Date().toISOString();
+  const signal = {
+    id: 1,
+    status: "open",
+    direction: "buy",
+    entry: 100,
+    stop: 99,
+    target: 102,
+    expires_at: new Date(Date.now() + 900000).toISOString(),
   };
-  const login = async (email = "admin@example.test") => {
-    const r = await request("/api/login", {
-      method: "POST",
-      data: { email, password: PASSWORD },
+  f.tables.wg_signals.push(signal);
+  f.tables.wg_signal_events.push({
+    id: 1,
+    kind: "status",
+    created_at: stamp,
+    delivery_until: new Date(Date.now() + 86400000).toISOString(),
+    snapshot: signal,
+  });
+  f.tables.wg_outbox.push({
+    id: 1,
+    signal_id: 1,
+    event_id: 1,
+    user_id: MEMBER,
+    destination: "1001",
+    attempts: 0,
+    state: "pending",
+    next_at: stamp,
+  });
+  f.telegramPolicy.retryAfter = 120;
+  const before = Date.now();
+  const run = () =>
+    f.request("/api/jobs/telegram", {
+      headers: { authorization: "Bearer test-job-secret" },
     });
-    return {
-      ...r,
-      cookie: r.headers.get("set-cookie")?.split(";")[0],
-      csrf: r.body.csrf,
-    };
-  };
-  return {
-    env,
-    app,
-    origin,
-    tables,
-    calls,
-    sent,
-    telegramPolicy,
-    request,
-    login,
-    failDatabase: () => {
-      unavailable = true;
-    },
-    failAuth: () => {
-      authUnavailable = true;
-    },
-  };
-}
+  assert.equal((await run()).status, 200);
+  assert.equal(f.tables.wg_outbox[0].state, "pending");
+  assert.equal(f.tables.wg_outbox[0].attempts, 1);
+  assert.ok(Date.parse(f.tables.wg_outbox[0].next_at) >= before + 120000);
+  f.telegramPolicy.retryAfter = null;
+  await run();
+  assert.equal(f.sent.length, 1);
+  f.tables.wg_outbox[0].next_at = new Date(Date.now() - 1000).toISOString();
+  await run();
+  assert.equal(f.tables.wg_outbox[0].state, "sent");
+});
 
 test("Supabase missing or invalid configuration fails closed; public branding remains available", async (t) => {
   for (const SUPABASE_URL of [
@@ -338,6 +226,72 @@ test("Supabase missing or invalid configuration fails closed; public branding re
     );
     assert.equal((await fetch(f.origin + "/.env")).status, 404);
   }
+});
+
+test("Vercel deployment-origin login succeeds despite a different canonical origin; CSRF and foreign-origin checks remain enforced", async (t) => {
+  const production = "https://wetagold.vercel.app",
+    preview = "https://wetagold-test123-team.vercel.app";
+  const f = await fixture(t, {
+    VERCEL: "1",
+    PUBLIC_ORIGIN: production,
+    VERCEL_URL: new URL(preview).hostname,
+  });
+  const result = await f.request("/api/login", {
+    method: "POST",
+    headers: { origin: preview },
+    data: { email: "admin@example.test", password: PASSWORD },
+  });
+  assert.equal(result.status, 200);
+  const auth = {
+    cookie: result.headers.get("set-cookie").split(";")[0],
+    csrf: result.body.csrf,
+  };
+  assert.equal(
+    (
+      await f.request("/api/admin/settings", {
+        method: "PATCH",
+        auth,
+        headers: { origin: preview },
+        data: { theme: "ocean" },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await f.request("/api/admin/settings", {
+        method: "PATCH",
+        auth: { ...auth, csrf: "wrong" },
+        headers: { origin: preview },
+        data: { theme: "gold" },
+      })
+    ).status,
+    403,
+  );
+  for (const origin of [
+    "https://attacker.test",
+    "https://unrelated.vercel.app",
+    f.origin,
+  ]) {
+    const blocked = await f.request("/api/login", {
+      method: "POST",
+      headers: { origin, "x-forwarded-host": new URL(origin).hostname },
+      data: { email: "admin@example.test", password: PASSWORD },
+    });
+    assert.equal(blocked.status, 403);
+    assert.equal(blocked.body.code, "ORIGIN_NOT_ALLOWED");
+  }
+  assert.equal((await f.request("/api/me", { auth })).body.user.role, "admin");
+  assert.equal(
+    (
+      await f.request("/api/login", {
+        method: "POST",
+        headers: { origin: production },
+        data: { email: "admin@example.test", password: PASSWORD },
+      })
+    ).status,
+    200,
+  );
 });
 
 test("Supabase research route checks roles before public-market access and does not mutate signals", async (t) => {
@@ -844,63 +798,84 @@ test("Supabase status updates automatically send TP to the verified private grou
   );
 });
 
-test("a group becoming public is blocked without blocking entitled private notifications", async (t) => {
-  const f = await fixture(t, { TELEGRAM_GROUP_CHAT_ID: "-1001" });
-  f.tables.wg_profiles[0].telegram_chat_id = "999";
-  f.telegramPolicy.public = true;
-  const snapshot = {
-    id: 1,
-    direction: "buy",
-    entry: 100,
-    stop: 99,
-    target: 101.5,
-    status: "stopped",
-    expires_at: new Date(Date.now() - 60000).toISOString(),
-  };
-  f.tables.wg_signals.push(snapshot);
-  f.tables.wg_signal_events.push({
-    id: 1,
-    kind: "status",
-    created_at: new Date().toISOString(),
-    delivery_until: new Date(Date.now() + 86400000).toISOString(),
-    snapshot,
-  });
-  f.tables.wg_outbox.push(
-    {
+for (const rejectedPolicy of ["public", "memberPosting"])
+  test(`a group with ${rejectedPolicy} is blocked without blocking entitled private notifications`, async (t) => {
+    const f = await fixture(t, { TELEGRAM_GROUP_CHAT_ID: "-1001" });
+    f.tables.wg_profiles[0].telegram_chat_id = "999";
+    f.telegramPolicy[rejectedPolicy] = true;
+    const snapshot = {
       id: 1,
-      signal_id: 1,
-      event_id: 1,
-      user_id: null,
-      destination: "-1001",
-      state: "pending",
-      attempts: 0,
-    },
-    {
-      id: 2,
-      signal_id: 1,
-      event_id: 1,
-      user_id: MEMBER,
-      destination: "1001",
-      state: "pending",
-      attempts: 0,
-    },
-  );
-  const r = await f.request("/api/jobs/telegram", {
-    headers: { authorization: `Bearer ${f.env.CRON_SECRET}` },
+      direction: "buy",
+      entry: 100,
+      stop: 99,
+      target: 101.5,
+      status: "stopped",
+      expires_at: new Date(Date.now() - 60000).toISOString(),
+    };
+    f.tables.wg_signals.push(snapshot);
+    f.tables.wg_signal_events.push({
+      id: 1,
+      kind: "status",
+      created_at: new Date().toISOString(),
+      delivery_until: new Date(Date.now() + 86400000).toISOString(),
+      snapshot,
+    });
+    f.tables.wg_outbox.push(
+      {
+        id: 1,
+        signal_id: 1,
+        event_id: 1,
+        user_id: null,
+        destination: "-1001",
+        state: "pending",
+        attempts: 0,
+      },
+      {
+        id: 2,
+        signal_id: 1,
+        event_id: 1,
+        user_id: MEMBER,
+        destination: "1001",
+        state: "pending",
+        attempts: 0,
+      },
+    );
+    const r = await f.request("/api/jobs/telegram", {
+      headers: { authorization: `Bearer ${f.env.CRON_SECRET}` },
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual(
+      f.sent.map((s) => s.chat_id),
+      ["1001"],
+    );
+    assert.match(f.sent[0].text, /وقف الخسارة SL/);
+    assert.equal(f.tables.wg_outbox[0].state, "pending");
+    assert.equal(f.tables.wg_outbox[0].attempts, 1);
   });
-  assert.equal(r.status, 200);
-  assert.deepEqual(
-    f.sent.map((s) => s.chat_id),
-    ["1001"],
-  );
-  assert.match(f.sent[0].text, /وقف الخسارة SL/);
-  assert.equal(f.tables.wg_outbox[0].state, "pending");
-  assert.equal(f.tables.wg_outbox[0].attempts, 1);
-});
 
-test("Supabase Telegram webhook/job are secret-protected and publishing sends the durable outbox immediately", async (t) => {
+test("a password verification outage is not reported as a wrong password and does not revoke the session", async (t) => {
   const f = await fixture(t),
     admin = await f.login();
+  f.failAuth();
+  const result = await f.request("/api/password", {
+    method: "POST",
+    auth: admin,
+    data: { currentPassword: PASSWORD, password: "new-test-password-123" },
+  });
+  assert.equal(result.status, 503);
+  assert.equal(result.body.code, "SUPABASE_UNAVAILABLE");
+  assert.doesNotMatch(result.body.error, /الحالية غير صحيحة/);
+  assert.equal(
+    (await f.request("/api/me", { auth: admin })).body.user.role,
+    "admin",
+  );
+  assert.equal(f.tables.wg_sessions.length, 1);
+});
+
+test("Supabase Telegram webhook/job are secret-protected and publishing sends text to the verified private group and entitled member immediately", async (t) => {
+  const f = await fixture(t, { TELEGRAM_GROUP_CHAT_ID: "-1001" }),
+    admin = await f.login();
+  f.tables.wg_profiles[0].telegram_chat_id = "999";
   const path = "/api/telegram/webhook",
     raw = "a".repeat(64);
   const data = {
@@ -941,6 +916,15 @@ test("Supabase Telegram webhook/job are secret-protected and publishing sends th
     state: "pending",
     attempts: 0,
   });
+  f.tables.wg_outbox.push({
+    id: 2,
+    event_id: 1,
+    signal_id: 1,
+    user_id: null,
+    destination: "-1001",
+    state: "pending",
+    attempts: 0,
+  });
   f.tables.wg_signal_events.push({
     id: 1,
     kind: "publish",
@@ -958,7 +942,15 @@ test("Supabase Telegram webhook/job are secret-protected and publishing sends th
     ).status,
     201,
   );
-  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent.length, 2);
+  assert.deepEqual(f.sent.map((s) => s.chat_id).sort(), ["-1001", "1001"]);
+  assert.ok(
+    f.sent.every(
+      (s) =>
+        typeof s.text === "string" &&
+        !/iframe|widgetembed|data:image|tradingview\.com/i.test(s.text),
+    ),
+  );
   assert.match(f.sent[0].text, /OANDA:XAUUSD/);
   assert.equal(f.tables.wg_outbox[0].state, "sent");
   assert.equal(

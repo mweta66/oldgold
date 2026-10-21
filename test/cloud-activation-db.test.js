@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { migrationBatch, vaultSetupSql } from "../scripts/cloud-activate.js";
 
-test("fresh cloud activation applies all three real migrations atomically and keeps migration metadata private", async (t) => {
+test("fresh cloud activation applies all four real migrations atomically and keeps migration metadata private", async (t) => {
   const db = new PGlite();
   t.after(() => db.close());
   await db.exec(
@@ -15,6 +15,7 @@ test("fresh cloud activation applies all three real migrations atomically and ke
       "001_wetagold.sql",
       "002_trade_history.sql",
       "003_telegram_events.sql",
+      "004_multiple_targets.sql",
     ].map(async (file) => ({
       version: file.slice(0, 3),
       sql: await readFile(
@@ -33,6 +34,7 @@ test("fresh cloud activation applies all three real migrations atomically and ke
     { version: "001", length: 64 },
     { version: "002", length: 64 },
     { version: "003", length: 64 },
+    { version: "004", length: 64 },
   ]);
   await db.exec("set role anon");
   await assert.rejects(
