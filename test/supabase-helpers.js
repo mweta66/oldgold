@@ -50,9 +50,10 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
   const telegramPolicy = { public: false, memberPosting: false };
   let unavailable = false,
     authUnavailable = false;
+  const missingTables = new Map();
   const matches = (row, url) =>
     [...url.searchParams].every(([key, value]) => {
-      if (["select", "order", "limit", "on_conflict"].includes(key))
+      if (["select", "order", "limit", "offset", "on_conflict"].includes(key))
         return true;
       const [op, ...parts] = value.split("."),
         expected = parts.join(".");
@@ -60,6 +61,10 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
       if (op === "gt") return row[key] > expected;
       if (op === "gte") return row[key] >= expected;
       if (op === "lte") return row[key] <= expected;
+      if (op === "ilike") {
+        const literal = expected.slice(1, -1).replace(/\\([\\%_])/g, "$1");
+        return String(row[key]).toLowerCase().includes(literal.toLowerCase());
+      }
       if (op === "in")
         return expected.slice(1, -1).split(",").includes(String(row[key]));
       throw new Error(`Unsupported provider filter: ${op}`);
@@ -73,6 +78,16 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
     if (url.hostname === "api.telegram.org") {
       if (url.pathname.endsWith("sendMessage")) sent.push(data);
       const method = url.pathname.split("/").pop();
+      if (method === "sendMessage" && telegramPolicy.retryAfter)
+        return json(
+          {
+            ok: false,
+            error_code: 429,
+            description: "private-test-bot-secret",
+            parameters: { retry_after: telegramPolicy.retryAfter },
+          },
+          429,
+        );
       if (method === "getChat")
         return json({
           ok: true,
@@ -153,6 +168,11 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
         return json({ id, user_metadata: userMetadata.get(id) });
       }
       if (method === "GET") {
+        if (url.pathname === "/auth/v1/admin/users") {
+          if (authUnavailable)
+            return json({ message: "private diagnostic" }, 503);
+          return json({ users: [], aud: "authenticated" });
+        }
         const id = url.pathname.split("/").pop();
         return json({ id, user_metadata: userMetadata.get(id) || {} });
       }
@@ -226,7 +246,11 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
         );
       if (name === "wg_delivery_counts") return json([]);
       if (name === "wg_claim_delivery") {
-        const rows = tables.wg_outbox.filter((r) => r.state === "pending");
+        const rows = tables.wg_outbox.filter(
+          (r) =>
+            r.state === "pending" &&
+            (!r.next_at || Date.parse(r.next_at) <= Date.now()),
+        );
         rows.forEach((r) => {
           r.state = "processing";
           r.lease_id = "test-lease";
@@ -237,6 +261,14 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
     }
     const name = url.pathname.split("/").pop(),
       rows = tables[name];
+    if (missingTables.has(name))
+      return json(
+        {
+          code: missingTables.get(name),
+          message: "private-test-schema-detail",
+        },
+        404,
+      );
     assert.ok(rows, `Unexpected provider endpoint ${url.pathname}`);
     if (method === "POST") {
       rows.push(data);
@@ -253,11 +285,22 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
       return new Response(null, { status: 204 });
     }
     const filtered = rows.filter((r) => matches(r, url));
-    return json(
+    const offset = Number(url.searchParams.get("offset") || 0);
+    const limited = filtered.slice(
+      offset,
+      offset + Number(url.searchParams.get("limit") || filtered.length),
+    );
+    const response = json(
       headers.get("accept") === "application/vnd.pgrst.object+json"
         ? filtered[0]
-        : filtered,
+        : limited,
     );
+    if (headers.get("prefer")?.includes("count=exact"))
+      response.headers.set(
+        "content-range",
+        `${offset}-${Math.max(offset, offset + limited.length - 1)}/${filtered.length}`,
+      );
+    return response;
   };
   const app = createCloudApp(env, { fetchImpl, ...marketOptions });
   await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
@@ -302,6 +345,7 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
     calls,
     sent,
     telegramPolicy,
+    failTable: (name, code = "42P01") => missingTables.set(name, code),
     request,
     login,
     failDatabase: () => {

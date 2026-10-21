@@ -3,6 +3,127 @@ import assert from "node:assert/strict";
 import { digest } from "../lib/crypto.js";
 import { fixture, ADMIN, MEMBER, PASSWORD } from "./supabase-helpers.js";
 
+test("health checks all required schema tables, diagnostics stay private and distinguish configuration from verification", async (t) => {
+  const f = await fixture(t, { VERCEL_GIT_COMMIT_SHA: "a".repeat(40) });
+  const admin = await f.login();
+  const member = await f.login("member@example.test");
+  assert.equal((await f.request("/api/admin/diagnostics")).status, 401);
+  assert.equal(
+    (await f.request("/api/admin/diagnostics", { auth: member })).status,
+    403,
+  );
+  assert.equal((await f.request("/api/health")).body.release, "a".repeat(40));
+  f.failTable("wg_signal_events");
+  const health = await f.request("/api/health");
+  assert.equal(health.status, 503);
+  assert.equal(health.body.code, "SUPABASE_SCHEMA_MISSING");
+  for (const code of ["42703", "PGRST204"]) {
+    f.failTable("wg_signals", code);
+    const missingColumn = await f.request("/api/health");
+    assert.equal(missingColumn.status, 503);
+    assert.equal(missingColumn.body.code, "SUPABASE_SCHEMA_MISSING");
+    assert.doesNotMatch(JSON.stringify(missingColumn.body), /private-test/);
+  }
+  const result = await f.request("/api/admin/diagnostics", { auth: admin });
+  assert.equal(result.status, 200);
+  assert.equal(
+    result.body.checks.find((c) => c.name === "wg_signal_events").ready,
+    false,
+  );
+  assert.equal(result.body.telegram.schedulerVerified, false);
+  assert.equal(result.body.market.automaticTracking, false);
+  assert.doesNotMatch(
+    JSON.stringify(result.body),
+    /private-test|secret|destination|telegram_chat_id/,
+  );
+  f.failAuth();
+  const authFailure = await f.request("/api/admin/diagnostics", {
+    auth: admin,
+  });
+  assert.equal(
+    authFailure.body.checks.find((c) => c.name === "auth").ready,
+    false,
+  );
+});
+
+test("Supabase accounts use counted server-side pages instead of silently truncating at the provider row limit", async (t) => {
+  const f = await fixture(t);
+  const admin = await f.login();
+  for (let n = 0; n < 1005; n++)
+    f.tables.wg_profiles.push({
+      ...f.tables.wg_profiles[1],
+      id: `test-member-${n}`,
+      email: `paged${n}@example.test`,
+    });
+  const first = await f.request("/api/admin/overview", { auth: admin });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.users.length, 20);
+  assert.equal(first.body.usersPagination.total, 1006);
+  const last = await f.request("/api/admin/overview?usersPage=51", {
+    auth: admin,
+  });
+  assert.equal(last.body.users.length, 6);
+  assert.equal(last.body.usersPagination.total, 1006);
+  const search = await f.request("/api/admin/overview?usersSearch=paged1004", {
+    auth: admin,
+  });
+  assert.equal(search.body.users.length, 1);
+  assert.equal(search.body.users[0].email, "paged1004@example.test");
+  assert.equal(
+    (await f.request("/api/admin/overview?usersPage=-1", { auth: admin }))
+      .status,
+    400,
+  );
+});
+
+test("Supabase Telegram rate limits persist the provider retry window without returning private descriptions", async (t) => {
+  const f = await fixture(t);
+  const stamp = new Date().toISOString();
+  const signal = {
+    id: 1,
+    status: "open",
+    direction: "buy",
+    entry: 100,
+    stop: 99,
+    target: 102,
+    expires_at: new Date(Date.now() + 900000).toISOString(),
+  };
+  f.tables.wg_signals.push(signal);
+  f.tables.wg_signal_events.push({
+    id: 1,
+    kind: "status",
+    created_at: stamp,
+    delivery_until: new Date(Date.now() + 86400000).toISOString(),
+    snapshot: signal,
+  });
+  f.tables.wg_outbox.push({
+    id: 1,
+    signal_id: 1,
+    event_id: 1,
+    user_id: MEMBER,
+    destination: "1001",
+    attempts: 0,
+    state: "pending",
+    next_at: stamp,
+  });
+  f.telegramPolicy.retryAfter = 120;
+  const before = Date.now();
+  const run = () =>
+    f.request("/api/jobs/telegram", {
+      headers: { authorization: "Bearer test-job-secret" },
+    });
+  assert.equal((await run()).status, 200);
+  assert.equal(f.tables.wg_outbox[0].state, "pending");
+  assert.equal(f.tables.wg_outbox[0].attempts, 1);
+  assert.ok(Date.parse(f.tables.wg_outbox[0].next_at) >= before + 120000);
+  f.telegramPolicy.retryAfter = null;
+  await run();
+  assert.equal(f.sent.length, 1);
+  f.tables.wg_outbox[0].next_at = new Date(Date.now() - 1000).toISOString();
+  await run();
+  assert.equal(f.tables.wg_outbox[0].state, "sent");
+});
+
 test("Supabase missing or invalid configuration fails closed; public branding remains available", async (t) => {
   for (const SUPABASE_URL of [
     "",

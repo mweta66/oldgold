@@ -535,20 +535,19 @@ test("temporary service failures after login preserve the session, last data and
       return route.continue();
     if (failure === "network") return route.abort("failed");
     return route.fulfill({
-      status: ["invalid", "invalidSession"].includes(failure)
+      status: ["invalid", "invalidSession", "invalidEnvelope"].includes(failure)
         ? 200
         : failure === "html"
           ? 502
           : 503,
       contentType: failure === "html" ? "text/html" : "application/json",
-      body:
-        failure === "invalidSession"
-          ? "{}"
-          : failure === "invalid"
-            ? "null"
-            : failure === "html"
-              ? "<h1>Temporary upstream failure</h1>"
-              : JSON.stringify({ error: "خدمة الحسابات غير متاحة مؤقتًا." }),
+      body: ["invalidSession", "invalidEnvelope"].includes(failure)
+        ? "{}"
+        : failure === "invalid"
+          ? "null"
+          : failure === "html"
+            ? "<h1>Temporary upstream failure</h1>"
+            : JSON.stringify({ error: "خدمة الحسابات غير متاحة مؤقتًا." }),
     });
   });
   await page.goto(f.origin);
@@ -583,7 +582,9 @@ test("temporary service failures after login preserve the session, last data and
     ["/api/me", "invalid"],
     ["/api/me", "invalidSession"],
     ["/api/signals", "html"],
+    ["/api/signals", "invalidEnvelope"],
     ["/api/admin/overview", "json"],
+    ["/api/admin/overview", "invalidEnvelope"],
   ]) {
     failingPath = path;
     failure = mode;
@@ -1082,9 +1083,10 @@ test("trade history shows real dates, all-time pages, filters, honest errors and
   await page.locator("#reloadHistory").click();
   await page.waitForSelector("#historyError", { state: "visible" });
   assert.match(
-    await page.locator("#history").textContent(),
-    /مش معناه إن مفيش صفقات/,
+    await page.locator("#historyError").textContent(),
+    /بيانات قديمة/,
   );
+  assert.equal(await page.locator("#history tbody tr").count(), 20);
   assert.equal(await page.locator("#serviceNotice").isVisible(), false);
   await context.unroute("**/api/history?**", failedRoute);
   await page.locator("#reloadHistory").click();
@@ -1196,7 +1198,7 @@ test("latest-trade card covers all-time history, honest missing entry times and 
   assert.match(await page.locator("#currentSignal").textContent(), /ملغاة/);
   assert.match(
     await page.locator("#currentSignal").textContent(),
-    /وقت الدخول الفعلي: غير مسجّل/,
+    /وقت فتح الإشارة المسجّل: غير مسجّل/,
   );
   assert.equal(await page.locator("#currentSignal time").count(), 0);
   assert.equal(await page.locator("#currentSignal form").count(), 0);
@@ -1402,4 +1404,204 @@ test("first administrator must replace a temporary password before accessing the
   await page.locator("#submitLogin").click();
   await page.waitForSelector("#adminPanel", { state: "visible" });
   assert.equal(await page.locator("#passwordRequirement").isVisible(), false);
+});
+
+test("signal-state drafts survive unchanged and changed refreshes; an in-flight mutation stays locked", async (t) => {
+  const { f, page, context } = await brandedPage(t);
+  const admin = await f.login();
+  await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  const form = page.locator('[data-action-key="1:pending"]');
+  await form.locator("select").selectOption("cancelled");
+  await page.locator("#refreshButton").click();
+  await page.waitForFunction(
+    () => !document.querySelector("#refreshButton").disabled,
+  );
+  assert.equal(await form.locator("select").inputValue(), "cancelled");
+  await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  await page.locator("#refreshButton").click();
+  await page.waitForFunction(
+    () => document.querySelectorAll("#currentSignal .signal-item").length === 2,
+  );
+  assert.equal(await form.locator("select").inputValue(), "cancelled");
+  let release,
+    requests = 0;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  t.after(() => release());
+  await context.route("**/api/admin/signals/1", async (route) => {
+    requests++;
+    await gate;
+    await route.continue();
+  });
+  await form.locator("button").click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-action-key="1:pending"] button').disabled,
+  );
+  await page.locator("#refreshButton").click();
+  await page.waitForFunction(
+    () => !document.querySelector("#refreshButton").disabled,
+  );
+  assert.equal(await form.locator("button").isDisabled(), true);
+  assert.equal(await form.locator("select").isDisabled(), true);
+  await form.evaluate((node) => node.requestSubmit());
+  assert.equal(requests, 1);
+  release();
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('[data-action-key="1:pending"]').length === 0,
+  );
+});
+
+test("temporary history failures retain only the matching cached page and never announce a full sync; CSV exports that page", async (t) => {
+  const { f, page, context } = await brandedPage(t);
+  const admin = await f.login();
+  await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  const fullSync = await page.locator("#lastUpdate").textContent();
+  const downloadPending = page.waitForEvent("download");
+  await page.locator("#exportHistory").click();
+  const download = await downloadPending;
+  assert.match(download.suggestedFilename(), /page-1\.csv$/);
+  const chunks = [];
+  for await (const chunk of await download.createReadStream())
+    chunks.push(chunk);
+  assert.match(Buffer.concat(chunks).toString(), /OANDA:XAUUSD/);
+  await context.route("**/api/history?**", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "temporary test failure" }),
+    }),
+  );
+  await page.locator("#refreshButton").click();
+  await page.waitForFunction(
+    () => !document.querySelector("#refreshButton").disabled,
+  );
+  assert.equal(await page.locator("#history tbody tr").count(), 1);
+  assert.match(
+    await page.locator("#historyError").textContent(),
+    /بيانات قديمة/,
+  );
+  assert.match(await page.locator("#globalError").textContent(), /تحديث جزئي/);
+  assert.equal(await page.locator("#lastUpdate").textContent(), fullSync);
+  await page.locator("#historyFilter").selectOption("stopped");
+  await page.waitForFunction(
+    () =>
+      !document.querySelector("#historyError").hidden &&
+      document.querySelectorAll("#history tbody tr").length === 0,
+  );
+  assert.equal(await page.locator("#exportHistory").isDisabled(), true);
+  await page.locator("#logoutButton").click();
+  await page.waitForSelector("#landing", { state: "visible" });
+  assert.equal(await page.locator("#history tbody tr").count(), 0);
+});
+
+test("administrator services panel is explicit about unverified integrations and clears on logout", async (t) => {
+  const { f, page } = await brandedPage(t);
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  await page.locator("#checkOperations").click();
+  await page.waitForFunction(
+    () => !document.querySelector("#checkOperations").disabled,
+  );
+  assert.match(
+    await page.locator("#operationsReport").textContent(),
+    /لا يوجد مصدر أسعار متحقق/,
+  );
+  assert.match(
+    await page.locator("#operationsReport").textContent(),
+    /غير متحقق بهذا الفحص/,
+  );
+  await page.locator("#logoutButton").click();
+  await page.waitForSelector("#landing", { state: "visible" });
+  assert.equal(await page.locator("#operationsReport").textContent(), "");
+});
+
+test("administrator can page and search member accounts without losing an unsaved edit", async (t) => {
+  const { f, page } = await brandedPage(t);
+  const hash = f.app.db
+    .prepare("SELECT password_hash FROM users WHERE role='admin'")
+    .get().password_hash;
+  for (let n = 0; n < 25; n++)
+    f.app.db
+      .prepare(
+        "INSERT INTO users(email,password_hash,created_at,expires_at) VALUES(?,?,?,?)",
+      )
+      .run(
+        `ui-member${String(n).padStart(2, "0")}@example.test`,
+        hash,
+        f.now(),
+        f.now() + 86400000,
+      );
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  assert.equal(await page.locator("#usersTable tbody tr").count(), 20);
+  await page.locator("#usersTable button").first().click();
+  const editedEmail = await page.locator("#userEmail").inputValue();
+  await page.locator("#userQuota").fill("55");
+  await page.locator("#usersNext").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#usersPage").textContent.includes("صفحة 2"),
+  );
+  assert.equal(await page.locator("#usersTable tbody tr").count(), 5);
+  assert.equal(await page.locator("#userEmail").inputValue(), editedEmail);
+  assert.equal(await page.locator("#userQuota").inputValue(), "55");
+  await page.locator("#userSearch").fill("ui-member07");
+  await page.waitForFunction(
+    () => document.querySelectorAll("#usersTable tbody tr").length === 1,
+  );
+  assert.match(
+    await page.locator("#usersTable").textContent(),
+    /ui-member07@example.test/,
+  );
+  assert.match(await page.locator("#usersPage").textContent(), /صفحة 1/);
+  assert.equal(await page.locator("#usersNext").isDisabled(), true);
+  assert.equal(await page.locator("#userQuota").inputValue(), "55");
+  await page.locator("#userSearch").fill("does-not-exist");
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#usersTable")
+      .textContent.includes("لا توجد حسابات مطابقة"),
+  );
 });

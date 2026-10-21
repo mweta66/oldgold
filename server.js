@@ -22,6 +22,8 @@ import { createBackups } from "./lib/backups.js";
 import { createCloudApp } from "./lib/cloud-server.js";
 import { validTheme } from "./lib/themes.js";
 import { historyQuery } from "./lib/history.js";
+import { operationsReport, releaseId } from "./lib/operations.js";
+import { memberQuery } from "./lib/member-query.js";
 import {
   timeZoneCountries,
   validPreferences,
@@ -230,7 +232,10 @@ export async function createApp(options = {}) {
       });
       res.end(JSON.stringify(payload));
     };
-    if (method === "GET" && path === "/api/health") return send({ ok: true });
+    if (method === "GET" && path === "/api/health") {
+      db.prepare("SELECT 1 FROM settings LIMIT 1").get();
+      return send({ ok: true, provider: "sqlite", release: releaseId(env) });
+    }
     if (method === "GET" && path === "/api/time-zones")
       return send({ countries: timeZoneCountries });
     if (method === "GET" && path === "/api/appearance")
@@ -474,14 +479,38 @@ export async function createApp(options = {}) {
     }
     if (!path.startsWith("/api/admin/")) throw error(404, "المسار غير موجود.");
     const { user: admin } = requireAdmin(req);
+    if (method === "GET" && path === "/api/admin/diagnostics") {
+      return send(
+        operationsReport(
+          env,
+          [{ name: "sqlite", ready: true }],
+          db
+            .prepare(
+              "SELECT id,signal_id,state,attempts,next_at FROM outbox ORDER BY id DESC LIMIT 20",
+            )
+            .all(),
+          now(),
+        ),
+      );
+    }
     if (method === "GET" && path === "/api/admin/research/bybit")
       return send(await bybitResearch());
     if (method === "GET" && path === "/api/admin/overview") {
+      const members = memberQuery(url.searchParams);
+      const pattern = `%${members.search.replace(/[\\%_]/g, "\\$&")}%`;
+      const total = db
+        .prepare(
+          "SELECT count(*) AS total FROM users WHERE role='member' AND email LIKE ? ESCAPE '\\'",
+        )
+        .get(pattern).total;
       return send({
         users: db
-          .prepare("SELECT * FROM users ORDER BY id DESC")
-          .all()
+          .prepare(
+            "SELECT * FROM users WHERE role='member' AND email LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ? OFFSET ?",
+          )
+          .all(pattern, members.pageSize, (members.page - 1) * members.pageSize)
           .map((account) => publicUser(account, now())),
+        usersPagination: { ...members, total },
         telegram: {
           configured: telegram.configured,
           adminGroupConfigured: Boolean(groupChatId(env)),
@@ -761,6 +790,7 @@ export async function createApp(options = {}) {
     ["/admin", ["index.html", "text/html; charset=utf-8"]],
     ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
     ["/time-zones.js", ["time-zones.js", "text/javascript; charset=utf-8"]],
+    ["/trade-export.js", ["trade-export.js", "text/javascript; charset=utf-8"]],
     ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
     ["/icon.svg", ["icon.svg", "image/svg+xml"]],
     ["/assets/wetagold-mark.png", ["assets/wetagold-mark.png", "image/png"]],

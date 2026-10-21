@@ -185,9 +185,18 @@
                 أحدث الصفقات أولًا، وكل تاريخ حسابك متاح بالصفحات.
               </p>
             </div>
-            <button id="reloadHistory" class="secondary-btn" type="button">
-              تحديث السجل
-            </button>
+            <div class="button-row">
+              <button
+                id="exportHistory"
+                class="secondary-btn"
+                type="button"
+                disabled
+              >
+                تصدير الصفحة CSV</button
+              ><button id="reloadHistory" class="secondary-btn" type="button">
+                تحديث السجل
+              </button>
+            </div>
           </div>
           <p class="muted small">
             ده سجل الإشارات المنشورة ونتائجها المسجّلة، مش سجل تنفيذ مستورد من
@@ -593,7 +602,38 @@
         </div>
         <article class="panel table-panel">
           <h3>الحسابات والصلاحيات</h3>
+          <div class="field">
+            <label for="userSearch">البحث في الحسابات بالبريد</label
+            ><input
+              id="userSearch"
+              type="search"
+              autocomplete="off"
+              maxlength="120"
+            />
+          </div>
+          <p id="usersSummary" class="small muted"></p>
           <div class="table-wrap" id="usersTable"></div>
+          <div class="button-row">
+            <button id="usersPrev" type="button" class="secondary-btn">
+              السابق</button
+            ><span id="usersPage" class="small"></span
+            ><button id="usersNext" type="button" class="secondary-btn">
+              التالي
+            </button>
+          </div>
+        </article>
+        <article class="panel">
+          <div class="panel-head">
+            <h3>تشخيص التشغيل والنسخة المنشورة</h3>
+            <button id="checkOperations" class="secondary-btn" type="button">
+              فحص الخدمات
+            </button>
+          </div>
+          <p class="small muted">
+            فحص قراءة فقط. وجود الإعدادات لا يثبت تشغيل الجدولة أو وصول رسالة
+            للجروب. لا تُرسل صفقات اختبار للمشتركين.
+          </p>
+          <div id="operationsReport" role="status"></div>
         </article>
         <article class="panel telegram-panel">
           <div class="panel-head">

@@ -5,6 +5,7 @@ import {
   localInput,
   localInputToIso,
 } from "./time-zones.js";
+import { historyCsv } from "./trade-export.js";
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 let user = null,
@@ -22,6 +23,8 @@ let displayPreferencesReady = false,
   displayCountry = "",
   countryCatalog = [];
 let historyData = null,
+  historyDataKey = "",
+  historyUpdatedAt = null,
   historyPage = 1,
   historySerial = 0,
   historyBusy = false;
@@ -31,6 +34,11 @@ let themeDirty = false,
   publishing = false,
   savingUser = false;
 const formLocks = new Map();
+const signalActions = new Map();
+let signalsRenderKey = "";
+let usersPage = 1,
+  usersSearch = "",
+  usersSearchTimer;
 function lockForm(selector) {
   const controls = [...$(selector).elements].map((node) => [
     node,
@@ -278,6 +286,53 @@ async function api(path, { method = "GET", data } = {}) {
       )
         throw new Error("Invalid session envelope");
     }
+    if (response.ok) {
+      const resource = path.split("?")[0];
+      const validSignal = (row) =>
+        row &&
+        [
+          "pending",
+          "open",
+          "target",
+          "stopped",
+          "expired",
+          "cancelled",
+        ].includes(row.status) &&
+        ["buy", "sell"].includes(row.direction) &&
+        [row.entry, row.stop, row.target, row.createdAt].every(Number.isFinite);
+      if (
+        resource === "/api/signals" &&
+        (!Array.isArray(payload.signals) ||
+          !payload.signals.every(validSignal) ||
+          !payload.user ||
+          !["admin", "member"].includes(payload.user.role) ||
+          typeof payload.user.accessActive !== "boolean" ||
+          !payload.stats ||
+          !Number.isSafeInteger(payload.stats.closed) ||
+          !Number.isSafeInteger(payload.stats.wins))
+      )
+        throw new Error("Invalid signals envelope");
+      if (
+        resource === "/api/history" &&
+        (!Array.isArray(payload.signals) ||
+          !payload.signals.every(validSignal) ||
+          !Number.isSafeInteger(payload.total) ||
+          payload.total < 0 ||
+          !Number.isSafeInteger(payload.page) ||
+          payload.page < 1 ||
+          payload.pageSize !== 20)
+      )
+        throw new Error("Invalid history envelope");
+      if (
+        resource === "/api/admin/overview" &&
+        (!Array.isArray(payload.users) ||
+          !Array.isArray(payload.audit) ||
+          typeof payload.paused !== "boolean" ||
+          !payload.telegram ||
+          !Array.isArray(payload.telegram.deliveries))
+      )
+        throw new Error("Invalid admin envelope");
+    }
   } catch {
     const resource =
       {
@@ -341,6 +396,10 @@ function clearSignals() {
   $("#currentSignalTitle").textContent = "الإشارات الحالية";
   historySerial++;
   historyData = null;
+  historyDataKey = "";
+  historyUpdatedAt = null;
+  signalActions.clear();
+  signalsRenderKey = "";
   historyBusy = false;
   $("#currentSignal").replaceChildren(
     element("div", "لا توجد إشارات متاحة لحسابك حاليًا.", "empty-state"),
@@ -356,6 +415,7 @@ function clearSignals() {
   $("#historyPage").textContent = "صفحة 1";
   $("#historyPrev").disabled = true;
   $("#historyNext").disabled = true;
+  $("#exportHistory").disabled = true;
   $("#history").setAttribute("aria-busy", "false");
   message("#historyError", "");
   $("#winStat").textContent = "—";
@@ -398,6 +458,14 @@ function setSession(payload) {
   $("#historyForm").reset();
   historyFilters = { status: "all", direction: "all", from: "", to: "" };
   overview = null;
+  usersPage = 1;
+  usersSearch = "";
+  clearTimeout(usersSearchTimer);
+  $("#userSearch").value = "";
+  $("#usersSummary").textContent = "";
+  $("#usersPage").textContent = "";
+  $("#operationsReport").replaceChildren();
+  $("#checkOperations").disabled = false;
   $("#usersTable").replaceChildren();
   $("#auditLog").replaceChildren();
   $("#chartContainer").replaceChildren();
@@ -546,7 +614,10 @@ function signalCard(signal) {
     Math.abs(signal.entry - signal.stop);
   const meta = element("div", undefined, "signal-meta");
   const opened = element("span");
-  opened.append(element("span", "وقت الدخول الفعلي: "), stamp(signal.openedAt));
+  opened.append(
+    element("span", "وقت فتح الإشارة المسجّل: "),
+    stamp(signal.openedAt),
+  );
   meta.append(
     element("span", `رقم الإشارة: #${signal.id} · ${signal.symbol}`),
     element("span", `العائد للمخاطرة: 1 : ${risk.toFixed(2)}`),
@@ -558,7 +629,15 @@ function signalCard(signal) {
   );
   wrap.append(head, levels, meta);
   if (user?.role === "admin" && transitions[signal.status]) {
+    const key = `${signal.id}:${signal.status}`;
+    if (!signalActions.has(key))
+      signalActions.set(key, {
+        selected: transitions[signal.status][0],
+        busy: false,
+      });
+    const action = signalActions.get(key);
     const form = element("form", undefined, "signal-admin-actions");
+    form.dataset.actionKey = key;
     const select = element("select");
     select.setAttribute("aria-label", `تغيير حالة الإشارة ${signal.id}`);
     for (const status of transitions[signal.status]) {
@@ -566,18 +645,26 @@ function signalCard(signal) {
       option.value = status;
       select.append(option);
     }
+    select.value = action.selected;
+    select.disabled = action.busy;
+    select.addEventListener("change", () => {
+      action.selected = select.value;
+    });
     const button = element("button", "تحديث الحالة", "secondary-btn");
+    button.disabled = action.busy;
     button.type = "submit";
     form.append(select, button);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const version = generation;
-      if (button.disabled) return;
+      if (action.busy) return;
+      action.busy = true;
       button.disabled = true;
+      select.disabled = true;
       try {
         await api(`/api/admin/signals/${signal.id}`, {
           method: "PATCH",
-          data: { status: select.value },
+          data: { status: action.selected },
         });
         if (version !== generation) return;
         notify("تم تحديث حالة الإشارة.");
@@ -585,7 +672,13 @@ function signalCard(signal) {
       } catch (err) {
         if (version === generation) message("#adminMessage", err.message);
       } finally {
-        if (version === generation) button.disabled = false;
+        if (version === generation) {
+          action.busy = false;
+          for (const node of $$("[data-action-key]")) {
+            if (node.dataset.actionKey === key)
+              for (const control of node.elements) control.disabled = false;
+          }
+        }
       }
     });
     wrap.append(form);
@@ -594,6 +687,14 @@ function signalCard(signal) {
 }
 
 function renderSignals() {
+  const renderKey = JSON.stringify([
+    signals,
+    latestSignal,
+    displayZone,
+    user?.role,
+  ]);
+  if (signalsRenderKey === renderKey) return;
+  signalsRenderKey = renderKey;
   const activeSignals = signals.filter((signal) =>
     ["pending", "open"].includes(signal.status),
   );
@@ -657,6 +758,7 @@ function renderHistory() {
   $("#historyPage").textContent = `صفحة ${page} من ${pages}`;
   $("#historyPrev").disabled = historyBusy || page <= 1;
   $("#historyNext").disabled = historyBusy || page >= pages;
+  $("#exportHistory").disabled = historyBusy || !rows.length;
   if (!rows.length) {
     const text = available
       ? "لا توجد صفقات مطابقة للفلاتر أو لهذه الصفحة. امسح الفلاتر لعرض السجل."
@@ -749,11 +851,9 @@ async function loadHistory() {
   const serial = ++historySerial,
     version = generation;
   historyBusy = true;
+  $("#exportHistory").disabled = true;
   message("#historyError", "");
   $("#history").setAttribute("aria-busy", "true");
-  $("#history").replaceChildren(
-    element("div", "جارٍ تحميل سجل الصفقات الحقيقي…", "empty-state"),
-  );
   $("#historyPrev").disabled = true;
   $("#historyNext").disabled = true;
   const params = new URLSearchParams({
@@ -764,29 +864,57 @@ async function loadHistory() {
   });
   if (historyFilters.from) params.set("from", historyFilters.from);
   if (historyFilters.to) params.set("to", historyFilters.to);
+  const queryKey = params.toString();
+  const keepPrevious = historyData && historyDataKey === queryKey;
+  if (!keepPrevious) {
+    historyData = null;
+    historyDataKey = "";
+    historyUpdatedAt = null;
+    $("#history").replaceChildren(
+      element("div", "جارٍ تحميل سجل الصفقات الحقيقي…", "empty-state"),
+    );
+  }
   try {
     const data = await api(`/api/history?${params}`);
-    if (serial !== historySerial || version !== generation) return;
+    if (serial !== historySerial || version !== generation)
+      return { ok: false, superseded: true };
     const lastPage = Math.max(1, Math.ceil(data.total / data.pageSize));
     if (data.page > lastPage) {
       historyPage = lastPage;
       return await loadHistory();
     }
     historyData = data;
+    historyDataKey = queryKey;
+    historyUpdatedAt = Date.now();
     historyBusy = false;
     renderHistory();
+    return { ok: true };
   } catch (err) {
-    if (serial !== historySerial || version !== generation) return;
-    historyData = null;
-    $("#history").replaceChildren(
-      element(
-        "div",
-        "السجل غير متاح الآن؛ ده مش معناه إن مفيش صفقات. اضغط تحديث السجل للمحاولة مجددًا.",
-        "empty-state",
-      ),
-    );
-    $("#historySummary").textContent = "";
-    message("#historyError", err.message);
+    if (serial !== historySerial || version !== generation)
+      return { ok: false, superseded: true };
+    if (!unavailable(err)) {
+      historyData = null;
+      historyDataKey = "";
+    }
+    if (keepPrevious && historyData) {
+      historyBusy = false;
+      renderHistory();
+      message(
+        "#historyError",
+        `تعذر تحديث السجل. المعروض بيانات قديمة من ${date(historyUpdatedAt)}، وليست تحديثًا حيًا. ${err.message}`,
+      );
+    } else {
+      $("#history").replaceChildren(
+        element(
+          "div",
+          "السجل غير متاح الآن؛ ده مش معناه إن مفيش صفقات. اضغط تحديث السجل للمحاولة مجددًا.",
+          "empty-state",
+        ),
+      );
+      $("#historySummary").textContent = "";
+      message("#historyError", err.message);
+    }
+    return { ok: false, error: err };
   } finally {
     if (serial === historySerial && version === generation) {
       historyBusy = false;
@@ -885,12 +1013,24 @@ function renderAdmin() {
     body.append(tr);
   }
   table.append(head, body);
+  const pagination = overview.usersPagination;
+  $("#usersSummary").textContent = pagination
+    ? `${pagination.total} حساب مطابق للبحث. عرض حتى ${pagination.pageSize} حسابًا في الصفحة.`
+    : "";
+  $("#usersPage").textContent = pagination
+    ? `صفحة ${pagination.page} من ${Math.max(1, Math.ceil(pagination.total / pagination.pageSize))}`
+    : "";
+  $("#usersPrev").disabled = !pagination || pagination.page <= 1;
+  $("#usersNext").disabled =
+    !pagination || pagination.page * pagination.pageSize >= pagination.total;
   $("#usersTable").replaceChildren(
     body.children.length
       ? table
       : element(
           "div",
-          "لا يوجد مشتركون بعد. أنشئ أول حساب من النموذج أعلاه.",
+          usersSearch
+            ? "لا توجد حسابات مطابقة للبحث."
+            : "لا يوجد مشتركون في هذه الصفحة. أنشئ حسابًا أو ارجع للصفحة السابقة.",
           "empty-state",
         ),
   );
@@ -941,6 +1081,7 @@ function refresh() {
 
 async function refreshOnce() {
   const version = generation;
+  let historyResult;
   $("#refreshButton").disabled = true;
   try {
     const session = await api("/api/me");
@@ -962,7 +1103,7 @@ async function refreshOnce() {
       latestSignal = result.latestSignal ?? null;
       renderAccount();
       renderSignals();
-      await loadHistory();
+      historyResult = await loadHistory();
       if (version !== generation) return;
       $("#winStat").textContent = result.stats.closed
         ? `${Math.round((result.stats.wins / result.stats.closed) * 100)}%`
@@ -975,13 +1116,33 @@ async function refreshOnce() {
       $("#chartContainer").replaceChildren();
     }
     if (user.role === "admin" && !user.mustChangePassword) {
-      const result = await api("/api/admin/overview");
+      const query = new URLSearchParams({
+        usersPage: String(usersPage),
+        usersSearch,
+      });
+      const result = await api(
+        usersPage === 1 && !usersSearch
+          ? "/api/admin/overview"
+          : `/api/admin/overview?${query}`,
+      );
       if (version !== generation) return;
-      overview = result;
-      renderAdmin();
+      if (
+        query.get("usersPage") === String(usersPage) &&
+        query.get("usersSearch") === usersSearch
+      ) {
+        overview = result;
+        renderAdmin();
+      } else refreshAgain = true;
     }
-    $("#lastUpdate").textContent = `آخر مزامنة: ${date(Date.now())}`;
-    message("#globalError", "");
+    if (historyResult?.ok === false) {
+      message(
+        "#globalError",
+        "تحديث جزئي: تم تحديث الإشارات لكن سجل الصفقات لم يُحدّث. راجع التنبيه في السجل.",
+      );
+    } else {
+      $("#lastUpdate").textContent = `آخر مزامنة: ${date(Date.now())}`;
+      message("#globalError", "");
+    }
   } catch (err) {
     if (version === generation) {
       if (unavailable(err)) showServiceUnavailable(err);
@@ -1047,6 +1208,94 @@ $("#logoutButton").addEventListener("click", async () => {
   }
 });
 $("#refreshButton").addEventListener("click", refresh);
+$("#exportHistory").addEventListener("click", () => {
+  if (!active() || !historyData?.signals.length || $("#exportHistory").disabled)
+    return;
+  const url = URL.createObjectURL(
+    new Blob([historyCsv(historyData.signals, displayZone)], {
+      type: "text/csv;charset=utf-8",
+    }),
+  );
+  const link = element("a");
+  link.href = url;
+  link.download = `wetagold-history-page-${historyData.page}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  notify(
+    "تم تصدير الصفحة المعروضة فقط، وليس كامل السجل. الملف يحتوي بياناتك؛ احفظه في مكان آمن.",
+  );
+});
+$("#userSearch").addEventListener("input", () => {
+  clearTimeout(usersSearchTimer);
+  const version = generation;
+  usersSearchTimer = setTimeout(() => {
+    if (version !== generation || user?.role !== "admin") return;
+    usersSearch = $("#userSearch").value.trim().toLowerCase();
+    usersPage = 1;
+    void refresh();
+  }, 350);
+});
+for (const [selector, change] of [
+  ["#usersPrev", -1],
+  ["#usersNext", 1],
+])
+  $(selector).addEventListener("click", () => {
+    if (user?.role !== "admin" || $(selector).disabled) return;
+    usersPage = Math.max(1, usersPage + change);
+    void refresh();
+  });
+$("#checkOperations").addEventListener("click", async () => {
+  if (user?.role !== "admin" || $("#checkOperations").disabled) return;
+  const version = generation;
+  $("#checkOperations").disabled = true;
+  try {
+    const report = await api("/api/admin/diagnostics");
+    if (version !== generation) return;
+    const container = $("#operationsReport");
+    const labels = {
+      auth: "واجهة إدارة الحسابات (ليست اختبار دخول)",
+      sqlite: "قاعدة البيانات المحلية",
+    };
+    container.replaceChildren(
+      element("p", `وقت الفحص: ${date(report.checkedAt)}`),
+      element(
+        "p",
+        `نسخة الخادم: ${report.release || "غير محددة — لا يوجد إثبات رقم نسخة الإنتاج"}`,
+      ),
+      ...report.checks.map((check) =>
+        element(
+          "p",
+          `${labels[check.name] || check.name}: ${check.ready ? "فحص القراءة نجح" : "تعذر التحقق"}`,
+          check.ready ? "positive" : "negative",
+        ),
+      ),
+      element("p", report.market.message, "message"),
+      element(
+        "p",
+        `توكن البوت: ${report.telegram.tokenConfigured ? "مضاف" : "غير مضاف"} · رقم الجروب: ${report.telegram.groupConfigured ? "مضاف؛ يلزم فحص الخصوصية" : "غير مضاف"}`,
+      ),
+      element(
+        "p",
+        "تشغيل الجدولة ووصول الرسائل للجروب واستعادة النسخ الاحتياطية: غير متحقق بهذا الفحص. وجود السر ليس دليل تشغيل.",
+      ),
+    );
+    for (const row of report.deliveries)
+      container.append(
+        element(
+          "p",
+          `رسالة #${row.id} · إشارة #${row.signalId} · ${row.state} · المحاولات: ${row.attempts} · الموعد المسجّل: ${date(row.nextAt)}`,
+          "small",
+        ),
+      );
+  } catch (err) {
+    if (version === generation)
+      $("#operationsReport").replaceChildren(
+        element("p", err.message, "negative"),
+      );
+  } finally {
+    if (version === generation) $("#checkOperations").disabled = false;
+  }
+});
 $$("[data-interval]").forEach((button) =>
   button.addEventListener("click", () => {
     if (!canViewChart()) return;

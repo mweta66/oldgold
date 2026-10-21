@@ -14,7 +14,7 @@
     "test": "node --test test/*.test.js",
     "test:browser": "node --test test/browser.e2e.js",
     "check": "node scripts/check-js.js",
-    "format:check": "prettier --check index.html styles.css app.js time-zones.js server.js lib test api scripts package.json manifest.webmanifest vercel.json README.md docs .github"
+    "format:check": "prettier --check index.html styles.css app.js time-zones.js trade-export.js server.js lib test api scripts package.json manifest.webmanifest vercel.json README.md docs .github"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",

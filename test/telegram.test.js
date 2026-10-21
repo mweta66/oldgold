@@ -2,6 +2,52 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fixture } from "./helpers.js";
 
+test("SQLite Telegram delivery respects retry_after across worker retries", async (t) => {
+  let attempts = 0;
+  const f = await fixture({
+    env: { TELEGRAM_BOT_TOKEN: "test-only-token" },
+    fetchImpl: async () => {
+      attempts++;
+      return Response.json(
+        {
+          ok: false,
+          error_code: 429,
+          description: "private-test-token",
+          parameters: { retry_after: 120 },
+        },
+        { status: 429 },
+      );
+    },
+  });
+  t.after(() => f.app.close());
+  const admin = await f.login();
+  const input = f.account("throttle@example.test");
+  await f.request("/api/admin/users", {
+    method: "POST",
+    auth: admin,
+    data: input,
+  });
+  f.app.db
+    .prepare("UPDATE users SET telegram_chat_id='123' WHERE email=?")
+    .run(input.email);
+  await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  await f.app.telegram.flush();
+  const row = f.app.db.prepare("SELECT * FROM outbox").get();
+  assert.equal(row.state, "pending");
+  assert.ok(row.next_at >= f.now() + 120000);
+  assert.doesNotMatch(row.last_error, /private-test/);
+  f.advance(119000);
+  await f.app.telegram.flush();
+  assert.equal(attempts, 1);
+  f.advance(1001);
+  await f.app.telegram.flush();
+  assert.equal(attempts, 2);
+});
+
 function privacyResult(method, body) {
   if (method === "getMe") return { id: 77, username: "WetaTestBot" };
   if (method === "getChat")
