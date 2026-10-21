@@ -14,7 +14,7 @@ const json = (value, status = 200) =>
 
 // Only the provider HTTP boundary is simulated. Requests use the real Supabase SDK.
 // Actual SQL, grants, RLS, quotas and RPC validation are tested in supabase-db.test.js.
-async function fixture(t, overrides = {}) {
+async function fixture(t, overrides = {}, marketOptions = {}) {
   const env = {
     SUPABASE_URL: "https://project.example.test",
     SUPABASE_ANON_KEY: "test-public-key",
@@ -47,6 +47,7 @@ async function fixture(t, overrides = {}) {
   };
   const calls = [],
     sent = [];
+  const userMetadata = new Map();
   const telegramPolicy = { public: false };
   let unavailable = false,
     authUnavailable = false;
@@ -141,6 +142,18 @@ async function fixture(t, overrides = {}) {
       assert.equal(headers.get("apikey"), env.SUPABASE_SERVICE_ROLE_KEY);
       if (method === "POST")
         return json({ id: crypto.randomUUID(), email: data.email });
+      if (method === "PUT" && data.user_metadata) {
+        const id = url.pathname.split("/").pop();
+        userMetadata.set(id, {
+          ...userMetadata.get(id),
+          ...data.user_metadata,
+        });
+        return json({ id, user_metadata: userMetadata.get(id) });
+      }
+      if (method === "GET") {
+        const id = url.pathname.split("/").pop();
+        return json({ id, user_metadata: userMetadata.get(id) || {} });
+      }
       if (method === "PUT")
         return json({
           id: url.pathname.split("/").pop(),
@@ -244,7 +257,7 @@ async function fixture(t, overrides = {}) {
         : filtered,
     );
   };
-  const app = createCloudApp(env, { fetchImpl });
+  const app = createCloudApp(env, { fetchImpl, ...marketOptions });
   await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(() => app.close());
   const origin = `http://127.0.0.1:${app.server.address().port}`;
@@ -325,6 +338,43 @@ test("Supabase missing or invalid configuration fails closed; public branding re
     );
     assert.equal((await fetch(f.origin + "/.env")).status, 404);
   }
+});
+
+test("Supabase research route checks roles before public-market access and does not mutate signals", async (t) => {
+  let calls = 0;
+  const f = await fixture(
+    t,
+    {},
+    {
+      bybitFetchImpl: async () => {
+        calls++;
+        return new Response("denied", { status: 403 });
+      },
+    },
+  );
+  assert.equal((await f.request("/api/admin/research/bybit")).status, 401);
+  const member = await f.login("member@example.test");
+  assert.equal(
+    (await f.request("/api/admin/research/bybit", { auth: member })).status,
+    403,
+  );
+  assert.equal(calls, 0);
+  const admin = await f.login();
+  const failed = await f.request("/api/admin/research/bybit", { auth: admin });
+  assert.equal(failed.status, 503);
+  assert.equal(failed.body.code, "BYBIT_ACCESS_DENIED");
+  assert.equal(calls, 1);
+  assert.equal(
+    (await f.request("/api/me", { auth: admin })).body.user.role,
+    "admin",
+  );
+  for (const table of [
+    "wg_signals",
+    "wg_allocations",
+    "wg_outbox",
+    "wg_signal_events",
+  ])
+    assert.equal(f.tables[table].length, 0);
 });
 
 test("real Supabase SDK: password login, opaque sessions, CSRF, role isolation and global theme persistence", async (t) => {
@@ -510,6 +560,144 @@ test("Supabase SDK history delegates validated paging and UTC dates to a private
     0,
   );
   assert.equal(f.tables.wg_profiles.find((p) => p.id === MEMBER).used, 0);
+});
+
+test("Supabase latest trade reuses private all-time history without leaking other allocations, changing quota or guessing entry times", async (t) => {
+  const f = await fixture(t),
+    admin = await f.login(),
+    member = await f.login("member@example.test");
+  const old = new Date(Date.now() - 130 * 86400000).toISOString();
+  const row = {
+    id: 1,
+    symbol: "OANDA:XAUUSD",
+    direction: "buy",
+    status: "target",
+    entry: 100,
+    stop: 99,
+    target: 101.5,
+    reference_price: 100,
+    created_at: old,
+    quote_at: old,
+    expires_at: old,
+    opened_at: old,
+    closed_at: old,
+    author_id: ADMIN,
+    request_id: "private-latest-request",
+  };
+  f.tables.wg_signals.push(row, {
+    ...row,
+    id: 2,
+    status: "cancelled",
+    opened_at: null,
+    created_at: new Date().toISOString(),
+  });
+  f.tables.wg_allocations.push({ user_id: MEMBER, signal_id: 1 });
+  assert.equal((await f.request("/api/signals")).status, 401);
+  const personal = await f.request(`/api/signals?p_user=${ADMIN}`, {
+    auth: member,
+  });
+  assert.equal(personal.body.latestSignal.id, 1);
+  assert.equal(personal.body.latestSignal.openedAt, Date.parse(old));
+  assert.doesNotMatch(
+    JSON.stringify(personal.body.latestSignal),
+    /author_id|private-latest-request|test-server-secret/,
+  );
+  const args = f.calls.find((c) => c.path.endsWith("/wg_history")).data;
+  assert.deepEqual(args, {
+    p_user: MEMBER,
+    p_page: 1,
+    p_status: "all",
+    p_direction: "all",
+    p_from: null,
+    p_to: null,
+  });
+  const owner = await f.request("/api/signals", { auth: admin });
+  assert.equal(owner.body.latestSignal.id, 2);
+  assert.equal(owner.body.latestSignal.openedAt, null);
+  f.tables.wg_allocations.length = 0;
+  assert.equal(
+    (await f.request("/api/signals", { auth: member })).body.latestSignal,
+    null,
+  );
+  f.tables.wg_signals.push({ ...row, id: 3, status: "open" });
+  const historyCalls = f.calls.filter((c) =>
+    c.path.endsWith("/wg_history"),
+  ).length;
+  assert.equal(
+    (await f.request("/api/signals", { auth: admin })).body.latestSignal,
+    null,
+  );
+  assert.equal(
+    f.calls.filter((c) => c.path.endsWith("/wg_history")).length,
+    historyCalls,
+  );
+  assert.equal(f.tables.wg_profiles.find((p) => p.id === MEMBER).used, 0);
+});
+
+test("Supabase stores timezone preferences in per-user Auth metadata, not role data or new schema columns", async (t) => {
+  const f = await fixture(t),
+    member = await f.login("member@example.test"),
+    admin = await f.login();
+  assert.equal((await f.request("/api/preferences")).status, 401);
+  assert.equal(
+    (await f.request("/api/preferences", { auth: admin })).body.timeZone,
+    "Africa/Cairo",
+  );
+  const change = await f.request("/api/preferences", {
+    method: "PATCH",
+    auth: member,
+    data: { country: "JP", timeZone: "Asia/Tokyo", role: "admin" },
+  });
+  assert.equal(change.status, 200);
+  const again = await f.login("member@example.test");
+  assert.deepEqual(
+    (await f.request("/api/preferences", { auth: again })).body,
+    { country: "JP", timeZone: "Asia/Tokyo", fixed: false },
+  );
+  assert.equal(
+    (await f.request("/api/me", { auth: member })).body.user.role,
+    "member",
+  );
+  assert.equal(
+    (await f.request("/api/me", { auth: member })).body.user.used,
+    0,
+  );
+  const write = f.calls.find(
+    (c) => c.method === "PUT" && c.data?.user_metadata,
+  );
+  assert.equal(write.path, `/auth/v1/admin/users/${MEMBER}`);
+  assert.deepEqual(write.data, {
+    user_metadata: {
+      wetagold_display: { country: "JP", timeZone: "Asia/Tokyo" },
+    },
+  });
+  assert.equal(
+    (
+      await f.request("/api/preferences", {
+        method: "PATCH",
+        auth: admin,
+        data: { country: "JP", timeZone: "Asia/Tokyo" },
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await f.request("/api/preferences", {
+        method: "PATCH",
+        auth: member,
+        data: { country: "JP", timeZone: "America/New_York" },
+      })
+    ).status,
+    400,
+  );
+  await f.request(
+    "/api/history?from=2026-01-16&to=2026-01-16&timeZone=Asia%2FTokyo",
+    { auth: member },
+  );
+  const range = f.calls.findLast((c) => c.path.endsWith("/wg_history")).data;
+  assert.equal(range.p_from, "2026-01-15T15:00:00.000Z");
+  assert.equal(range.p_to, "2026-01-16T15:00:00.000Z");
 });
 
 test("Supabase account provisioning uses Auth Admin API and never accepts a submitted admin role", async (t) => {

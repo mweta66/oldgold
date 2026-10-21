@@ -1,14 +1,26 @@
+import {
+  EGYPT_ZONE,
+  validTimeZone,
+  zonedParts,
+  localInput,
+  localInputToIso,
+} from "./time-zones.js";
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 let user = null,
   csrf = "",
   signals = [],
+  latestSignal = null,
   overview = null,
   refreshTask = null,
   refreshAgain = false,
   generation = 0;
 let serviceReady = false,
   serviceCheck = null;
+let displayPreferencesReady = false,
+  displayZone = "UTC",
+  displayCountry = "",
+  countryCatalog = [];
 let historyData = null,
   historyPage = 1,
   historySerial = 0,
@@ -60,15 +72,15 @@ const transitions = {
 };
 const date = (value) =>
   value
-    ? `${new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(value)} UTC`
+    ? `${new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short", timeZone: displayZone }).format(value)} · ${zoneCaption(value)}`
     : "—";
 const price = (value) =>
   new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2,
   }).format(value);
-const inputDate = (value) => new Date(value).toISOString().slice(0, 16);
-const isoDate = (value) => new Date(`${value}:00Z`).toISOString();
+const inputDate = (value) => localInput(value, displayZone);
+const isoDate = (value) => localInputToIso(value, displayZone);
 const active = () => Boolean(user?.accessActive);
 const element = (tag, text, className = "") => {
   const node = document.createElement(tag);
@@ -81,6 +93,118 @@ const message = (selector, text) => {
   node.textContent = text;
   node.hidden = !text;
 };
+function offsetCaption(value) {
+  return new Intl.DateTimeFormat("en", {
+    timeZone: displayZone,
+    timeZoneName: "shortOffset",
+  })
+    .formatToParts(value)
+    .find((p) => p.type === "timeZoneName")
+    .value.replace("GMT", "UTC");
+}
+function zoneCaption(value = Date.now()) {
+  return displayZone === EGYPT_ZONE
+    ? `توقيت مصر (${offsetCaption(value)})`
+    : `${displayZone} (${offsetCaption(value)})`;
+}
+function fillTimeZoneChoices(preferred) {
+  const country = countryCatalog.find(
+    (c) => c.country === $("#accountCountry").value,
+  );
+  const zones = country?.timeZones.filter(validTimeZone) || [];
+  $("#accountTimeZone").replaceChildren(
+    ...zones.map((zone) => {
+      const option = element("option", zone.replaceAll("_", " "));
+      option.value = zone;
+      return option;
+    }),
+  );
+  if (zones.includes(preferred)) $("#accountTimeZone").value = preferred;
+  $("#accountTimeZone").disabled = !displayPreferencesReady || !zones.length;
+}
+function applyDisplayPreferences(data) {
+  const previousZone = displayZone;
+  displayCountry = user?.role === "admin" ? "EG" : data.country || "";
+  displayZone =
+    user?.role === "admin"
+      ? EGYPT_ZONE
+      : validTimeZone(data.timeZone)
+        ? data.timeZone
+        : "UTC";
+  const zoneTitle = displayZone === EGYPT_ZONE ? "توقيت مصر" : displayZone;
+  $("#displayTimeNote").textContent =
+    `منطقة العرض: ${zoneTitle} · التوقيت الصيفي تلقائي`;
+  $("#historyTimeNote").textContent =
+    `التواريخ وفلاتر أيام النشر حسب ${zoneTitle}، والفرق عن UTC محسوب لكل تاريخ.`;
+  $("#timezoneSummary").textContent =
+    user?.role === "admin"
+      ? `حساب المدير ثابت على ${zoneCaption()}.`
+      : `توقيت عرض الصفقات: ${zoneCaption()}`;
+  $("#timezoneControls").hidden = user?.role === "admin";
+  $("#accountCountry").value = displayCountry;
+  fillTimeZoneChoices(displayZone);
+  $("#accountCountry").disabled =
+    !displayPreferencesReady || !countryCatalog.length;
+  $("#saveTimeZone").disabled =
+    !displayPreferencesReady || !countryCatalog.length;
+  if (
+    previousZone !== displayZone &&
+    user &&
+    active() &&
+    $("#chartContainer iframe")
+  )
+    loadChart();
+}
+async function loadCountryCatalog() {
+  try {
+    const data = await api("/api/time-zones");
+    countryCatalog = data.countries;
+    const names = new Intl.DisplayNames(["ar"], { type: "region" });
+    $("#accountCountry").replaceChildren(
+      element("option", "اختر بلدك"),
+      ...countryCatalog
+        .slice()
+        .sort((a, b) =>
+          names.of(a.country).localeCompare(names.of(b.country), "ar"),
+        )
+        .map((c) => {
+          const option = element("option", names.of(c.country));
+          option.value = c.country;
+          return option;
+        }),
+    );
+    $("#accountCountry").firstElementChild.value = "";
+    applyDisplayPreferences({ country: displayCountry, timeZone: displayZone });
+  } catch {
+    message(
+      "#timezoneMessage",
+      "تعذر تحميل قائمة البلدان. أعد تحميل الصفحة للمحاولة مجددًا.",
+    );
+  }
+}
+async function loadDisplayPreferences() {
+  const version = generation;
+  try {
+    const data =
+      user.role === "admin"
+        ? { country: "EG", timeZone: EGYPT_ZONE }
+        : await api("/api/preferences");
+    if (version !== generation) return;
+    displayPreferencesReady = true;
+    applyDisplayPreferences(data);
+    renderAccount();
+  } catch {
+    if (version === generation) {
+      displayPreferencesReady = true;
+      $("#accountCountry").disabled = !countryCatalog.length;
+      $("#saveTimeZone").disabled = !countryCatalog.length;
+      message(
+        "#timezoneMessage",
+        "تعذر تحميل توقيت الحساب. العرض مؤقتًا بتوقيت UTC؛ لم يتغير الاختيار المحفوظ.",
+      );
+    }
+  }
+}
 const notify = (text) => {
   clearTimeout(toastTimer);
   message("#toast", text);
@@ -90,6 +214,7 @@ const notify = (text) => {
 };
 
 async function api(path, { method = "GET", data } = {}) {
+  const requestGeneration = generation;
   let response;
   try {
     response = await fetch(path, {
@@ -97,10 +222,12 @@ async function api(path, { method = "GET", data } = {}) {
       credentials: "same-origin",
       cache: "no-store",
       signal: AbortSignal.timeout(
-        path.startsWith("/api/admin/signals") ||
-          path === "/api/admin/telegram/group-check"
-          ? 30000
-          : 15000,
+        path === "/api/admin/research/bybit"
+          ? 45000
+          : path.startsWith("/api/admin/signals") ||
+              path === "/api/admin/telegram/group-check"
+            ? 30000
+            : 15000,
       ),
       headers: {
         ...(data === undefined ? {} : { "content-type": "application/json" }),
@@ -118,13 +245,30 @@ async function api(path, { method = "GET", data } = {}) {
   try {
     payload = await response.json();
   } catch {
+    const resource =
+      {
+        "/api/health": "فحص الخدمة",
+        "/api/me": "جلسة الحساب",
+        "/api/signals": "الإشارات",
+        "/api/history": "سجل الصفقات",
+        "/api/admin/overview": "لوحة الإدارة",
+      }[path.split("?")[0]] || "خدمة الحسابات";
     throw Object.assign(
-      new Error("الخدمة غير متاحة. تواصل مع إدارة WetaGold."),
+      new Error(
+        `رد الخدمة غير صالح (${resource}؛ HTTP ${response.status}). حاول مجددًا.`,
+      ),
       { code: "SERVICE_RESPONSE_INVALID", status: response.status },
     );
   }
   if (!response.ok) {
-    if (response.status === 401 && path !== "/api/login") setSession(null);
+    if (
+      response.status === 401 &&
+      path !== "/api/login" &&
+      requestGeneration === generation
+    ) {
+      setSession(null);
+      message("#globalError", "انتهت جلسة الدخول. سجّل الدخول مجددًا.");
+    }
     throw Object.assign(new Error(payload.error || "تعذر تنفيذ العملية."), {
       status: response.status,
       code: payload.code,
@@ -144,8 +288,14 @@ function setServiceReady(ready) {
   $("#submitLogin").disabled = !ready;
 }
 function showServiceUnavailable(err) {
+  if (user) {
+    message(
+      "#globalError",
+      `تعذر تحديث البيانات: ${err.message} البيانات المعروضة من آخر تحديث ناجح. أعد المحاولة بزر «تحديث».`,
+    );
+    return;
+  }
   if ($("#loginDialog").open) $("#loginDialog").close();
-  setSession(null);
   setServiceReady(false);
   message("#serviceExplanation", err.message);
   $("#serviceNotice").hidden = false;
@@ -153,6 +303,8 @@ function showServiceUnavailable(err) {
 
 function clearSignals() {
   signals = [];
+  latestSignal = null;
+  $("#currentSignalTitle").textContent = "الإشارات الحالية";
   historySerial++;
   historyData = null;
   historyBusy = false;
@@ -178,12 +330,18 @@ function clearSignals() {
 
 function setSession(payload) {
   generation++;
+  $("#bybitResearchReport").replaceChildren();
+  $("#bybitResearchStatus").textContent = "";
+  $("#bybitResearchButton").disabled = false;
   themeDirty = false;
   themeSaving = false;
   $("#saveTheme").disabled = false;
   $("#checkTelegramGroup").disabled = false;
   user = payload?.user || null;
   csrf = payload?.csrf || "";
+  displayPreferencesReady = false;
+  applyDisplayPreferences({ country: "", timeZone: "UTC" });
+  message("#timezoneMessage", "");
   clearSignals();
   historyPage = 1;
   $("#historyForm").reset();
@@ -289,7 +447,7 @@ function loadChart() {
     theme:
       document.documentElement.dataset.theme === "ivory" ? "light" : "dark",
     style: "1",
-    timezone: "Etc/UTC",
+    timezone: displayZone === "UTC" ? "Etc/UTC" : displayZone,
   });
   iframe.src = `https://www.tradingview.com/widgetembed/?${params}`;
   iframe.title = "شارت الذهب OANDA:XAUUSD من TradingView";
@@ -327,11 +485,13 @@ function signalCard(signal) {
     Math.abs(signal.target - signal.entry) /
     Math.abs(signal.entry - signal.stop);
   const meta = element("div", undefined, "signal-meta");
+  const opened = element("span");
+  opened.append(element("span", "وقت الدخول الفعلي: "), stamp(signal.openedAt));
   meta.append(
     element("span", `رقم الإشارة: #${signal.id} · ${signal.symbol}`),
     element("span", `العائد للمخاطرة: 1 : ${risk.toFixed(2)}`),
     element("span", `صدرت: ${date(signal.createdAt)}`),
-    element("span", `فُتحت: ${date(signal.openedAt)}`),
+    opened,
     element("span", `أُغلقت / انتهت: ${date(signal.closedAt)}`),
     element("span", `صلاحية الدخول: ${date(signal.expiresAt)}`),
     element("span", `السعر المرجعي عند النشر: ${price(signal.referencePrice)}`),
@@ -374,28 +534,49 @@ function renderSignals() {
   const activeSignals = signals.filter((signal) =>
     ["pending", "open"].includes(signal.status),
   );
+  // A newly published signal may arrive between the active and history reads.
+  if (
+    !activeSignals.length &&
+    ["pending", "open"].includes(latestSignal?.status)
+  )
+    activeSignals.push(latestSignal);
+  $("#currentSignalTitle").textContent = activeSignals.length
+    ? "الإشارات الحالية"
+    : latestSignal
+      ? "آخر صفقة لحسابك"
+      : "الإشارات الحالية";
   $("#currentSignal").replaceChildren(
     ...(activeSignals.length
       ? activeSignals.map(signalCard)
-      : [
-          element(
-            "div",
-            "لا توجد إشارات نشطة الآن. الصفقات السابقة موجودة في سجل الصفقات بالأسفل.",
-            "empty-state",
-          ),
-        ]),
+      : latestSignal
+        ? [
+            element(
+              "p",
+              "لا توجد صفقة حالية. هذه آخر صفقة منشورة متاحة لحسابك للمتابعة فقط، وليست توصية دخول جديدة.",
+              "muted small",
+            ),
+            signalCard(latestSignal),
+          ]
+        : [
+            element(
+              "div",
+              "لا توجد صفقة حالية أو صفقات سابقة متاحة لحسابك حتى الآن. تظهر الإشارات عند نشرها وتخصيصها لحسابك.",
+              "empty-state",
+            ),
+          ]),
   );
 }
 
 function stamp(value, fallback = "غير مسجّل") {
   if (!Number.isFinite(value)) return element("span", fallback, "muted small");
   const iso = new Date(value).toISOString(),
+    local = zonedParts(value, displayZone),
     node = element("time", undefined, "date-stamp");
   node.dateTime = iso;
   node.dir = "ltr";
   node.append(
-    element("strong", iso.slice(0, 10)),
-    element("span", `${iso.slice(11, 19)} UTC`),
+    element("strong", local.date),
+    element("span", `${local.time} ${offsetCaption(value)}`),
   );
   return node;
 }
@@ -516,6 +697,7 @@ async function loadHistory() {
     page: String(historyPage),
     status: historyFilters.status,
     direction: historyFilters.direction,
+    timeZone: displayZone,
   });
   if (historyFilters.from) params.set("from", historyFilters.from);
   if (historyFilters.to) params.set("to", historyFilters.to);
@@ -702,7 +884,8 @@ async function refreshOnce() {
     if (version !== generation) return;
     if (!session.user) {
       setSession(null);
-      throw new Error("انتهت جلسة الدخول. سجّل الدخول مجددًا.");
+      message("#globalError", "انتهت جلسة الدخول. سجّل الدخول مجددًا.");
+      return;
     }
     user = session.user;
     csrf = session.csrf;
@@ -713,6 +896,7 @@ async function refreshOnce() {
       if (version !== generation) return;
       user = result.user;
       signals = result.signals;
+      latestSignal = result.latestSignal ?? null;
       renderAccount();
       renderSignals();
       await loadHistory();
@@ -736,10 +920,12 @@ async function refreshOnce() {
     $("#lastUpdate").textContent = `آخر مزامنة: ${date(Date.now())}`;
     message("#globalError", "");
   } catch (err) {
-    if (version === generation || !user) {
-      clearSignals();
+    if (version === generation) {
       if (unavailable(err)) showServiceUnavailable(err);
-      else message("#globalError", err.message);
+      else {
+        clearSignals();
+        message("#globalError", err.message);
+      }
     }
   } finally {
     $("#refreshButton").disabled = false;
@@ -768,6 +954,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
     });
     setSession(result);
     $("#loginDialog").close();
+    await loadDisplayPreferences();
     await refresh();
   } catch (err) {
     if (unavailable(err)) showServiceUnavailable(err);
@@ -1014,6 +1201,33 @@ $("#checkTelegramGroup").addEventListener("click", async () => {
   }
 });
 $("#year").textContent = new Date().getFullYear();
+$("#accountCountry").addEventListener("change", () => fillTimeZoneChoices());
+$("#timezoneForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const version = generation;
+  $("#saveTimeZone").disabled = true;
+  try {
+    const result = await api("/api/preferences", {
+      method: "PATCH",
+      data: {
+        country: $("#accountCountry").value,
+        timeZone: $("#accountTimeZone").value,
+      },
+    });
+    if (version !== generation) return;
+    applyDisplayPreferences(result);
+    historyPage = 1;
+    renderAccount();
+    loadChart();
+    message("#timezoneMessage", "تم حفظ البلد والتوقيت في حسابك.");
+    await refresh();
+  } catch (err) {
+    if (version === generation) message("#timezoneMessage", err.message);
+  } finally {
+    if (version === generation)
+      $("#saveTimeZone").disabled = !countryCatalog.length;
+  }
+});
 $("#siteTheme").addEventListener("change", () => {
   themeDirty = true;
 });
@@ -1059,6 +1273,7 @@ async function checkService() {
         { code: "SERVICE_RESPONSE_INVALID" },
       );
     setSession(result);
+    if (user) await loadDisplayPreferences();
     setServiceReady(true);
     $("#serviceNotice").hidden = true;
     if (user) await refresh();
@@ -1077,7 +1292,112 @@ function init() {
   return serviceCheck;
 }
 $("#retryService").addEventListener("click", init);
+$("#bybitResearchButton").addEventListener("click", async () => {
+  const researchStamp = (value) =>
+    Number.isFinite(value)
+      ? `${zonedParts(value, displayZone).date} ${zonedParts(value, displayZone).time} ${offsetCaption(value)}`
+      : "غير مسجّل";
+  const researchPrice = (value) =>
+    new Intl.NumberFormat("en-US", { maximumFractionDigits: 10 }).format(value);
+  const current = generation;
+  const button = $("#bybitResearchButton");
+  button.disabled = true;
+  $("#bybitResearchStatus").textContent =
+    "جاري التحقق من السوق والشموع المغلقة…";
+  try {
+    const report = await api("/api/admin/research/bybit");
+    if (current !== generation) return;
+    const container = $("#bybitResearchReport");
+    container.replaceChildren();
+    container.append(
+      element(
+        "p",
+        `${report.market.venue} · ${report.market.symbol} · ${report.market.description}`,
+      ),
+    );
+    container.append(
+      element(
+        "p",
+        `من ${researchStamp(report.window.start)} إلى ${researchStamp(report.window.end)}. آخر سعر: ${researchPrice(report.ticker.last)} USDT، بتاريخ ${researchStamp(report.ticker.asOf)}.`,
+      ),
+    );
+    container.append(
+      element(
+        "p",
+        `التغطية: ${report.coverage.observedMinutes}/${report.coverage.expectedMinutes} دقيقة؛ تهيئة المؤشرات: ${report.coverage.warmupObservedMinutes}/${report.coverage.warmupExpectedMinutes}. ${report.coverage.complete ? "مكتملة" : "ناقصة — النتائج لا تمثل كامل الفترة"}.`,
+      ),
+    );
+    const costs = report.costs;
+    container.append(
+      element(
+        "p",
+        `افتراضات التكلفة (نقاط أساس): عمولة ${costs.feeBpsPerSide} لكل جانب، سبريد ${costs.spreadBps}، انزلاق ${costs.slippageBpsPerSide} لكل جانب. التمويل غير محسوب. R وحدة مخاطرة افتراضية وليست أرباح حسابك.`,
+      ),
+    );
+    for (const warning of report.warnings)
+      container.append(element("p", warning, "muted small"));
+    container.append(
+      element(
+        "p",
+        `${report.stats.count} صفقة افتراضية؛ ${report.stats.resolved} بنتائج محسومة؛ صافي النتائج المعروفة ${report.stats.netRKnown.toFixed(2)}R. غير المحسوم لا يُحتسب ربحًا أو خسارة مؤكدة.`,
+      ),
+    );
+    const wrap = element("div", undefined, "table-wrap"),
+      table = element("table");
+    const head = element("thead"),
+      row = element("tr");
+    for (const label of [
+      "الاتجاه",
+      "وقت الدخول",
+      "الدخول / SL / TP",
+      "وقت رصد الإغلاق",
+      "النتيجة",
+      "صافي R",
+    ]) {
+      const th = element("th", label);
+      th.scope = "col";
+      row.append(th);
+    }
+    head.append(row);
+    table.append(head);
+    const body = element("tbody");
+    const labels = {
+      open: "مفتوحة",
+      target: "هدف",
+      stopped: "وقف",
+      time_exit: "خروج زمني",
+      ambiguous: "TP وSL بنفس الدقيقة — غير محسوم",
+      unresolved_gap: "فجوة بيانات — غير محسوم",
+    };
+    for (const trade of report.trades) {
+      const tr = element("tr");
+      for (const value of [
+        trade.direction === "buy" ? "شراء" : "بيع",
+        researchStamp(trade.openedAt),
+        `${researchPrice(trade.entry)} / ${researchPrice(trade.stop)} / ${researchPrice(trade.target)}`,
+        researchStamp(trade.exitAt),
+        labels[trade.status] || "غير معروف",
+        Number.isFinite(trade.netR) ? trade.netR.toFixed(2) : "غير محسوم",
+      ])
+        tr.append(element("td", value));
+      body.append(tr);
+    }
+    table.append(body);
+    wrap.append(table);
+    container.append(wrap);
+    $("#bybitResearchStatus").textContent = report.stats.count
+      ? "اكتملت المحاكاة البحثية — لم تُنشر أي صفقة."
+      : "لا توجد إشارات وفق القواعد في البيانات المتاحة؛ لم تُنشأ صفقات مصطنعة.";
+  } catch (err) {
+    if (current === generation)
+      $("#bybitResearchStatus").textContent =
+        `${err.message} أي تقرير سابق لم يُحدّث.`;
+  } finally {
+    if (current === generation) button.disabled = false;
+  }
+});
 void init();
+void loadCountryCatalog();
 void syncAppearance();
 setInterval(() => {
   if (!document.hidden) void syncAppearance();

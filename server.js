@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createBybitResearch } from "./lib/bybit-research.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve, join } from "node:path";
@@ -21,6 +22,11 @@ import { createBackups } from "./lib/backups.js";
 import { createCloudApp } from "./lib/cloud-server.js";
 import { validTheme } from "./lib/themes.js";
 import { historyQuery } from "./lib/history.js";
+import {
+  timeZoneCountries,
+  validPreferences,
+  displayPreferences,
+} from "./lib/country-time-zones.js";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const SESSION_DURATION = 12 * 60 * 60 * 1000;
@@ -40,8 +46,15 @@ const timestamp = (value) =>
 export async function createApp(options = {}) {
   const env = options.env || process.env;
   if (env.SUPABASE_URL || env.STORAGE_PROVIDER === "supabase")
-    return createCloudApp(env, { fetchImpl: options.fetchImpl });
+    return createCloudApp(env, {
+      fetchImpl: options.fetchImpl,
+      bybitFetchImpl: options.bybitFetchImpl,
+    });
   const now = options.now || Date.now;
+  const bybitResearch = createBybitResearch({
+    fetchImpl: options.bybitFetchImpl || options.fetchImpl,
+    now,
+  });
   const databasePath =
     options.databasePath ||
     env.DATABASE_PATH ||
@@ -218,6 +231,8 @@ export async function createApp(options = {}) {
       res.end(JSON.stringify(payload));
     };
     if (method === "GET" && path === "/api/health") return send({ ok: true });
+    if (method === "GET" && path === "/api/time-zones")
+      return send({ countries: timeZoneCountries });
     if (method === "GET" && path === "/api/appearance")
       return send({
         theme:
@@ -308,6 +323,28 @@ export async function createApp(options = {}) {
       res.setHeader("set-cookie", cookie(""));
       return send({ ok: true });
     }
+    if (path === "/api/preferences" && ["GET", "PATCH"].includes(method)) {
+      const { user } = requireSession(req);
+      if (method === "PATCH") {
+        if (user.role === "admin")
+          throw error(403, "توقيت المدير ثابت على توقيت مصر.");
+        const data = await bodyOf(req);
+        if (!validPreferences(data))
+          throw error(400, "اختر البلد ومنطقة زمنية صحيحة داخله.");
+        db.prepare("UPDATE users SET country=?,time_zone=? WHERE id=?").run(
+          data.country,
+          data.timeZone,
+          user.id,
+        );
+        return send(displayPreferences(user.role, data));
+      }
+      return send(
+        displayPreferences(user.role, {
+          country: user.country,
+          timeZone: user.time_zone,
+        }),
+      );
+    }
     if (method === "GET" && path === "/api/signals") {
       const { user } = requireSession(req);
       requireActive(user);
@@ -328,8 +365,24 @@ export async function createApp(options = {}) {
       const closed = rows.filter((row) =>
         ["target", "stopped"].includes(row.status),
       );
+      const latest = rows.some((row) =>
+        ["pending", "open"].includes(row.status),
+      )
+        ? null
+        : user.role === "admin"
+          ? db
+              .prepare(
+                "SELECT * FROM signals ORDER BY created_at DESC,id DESC LIMIT 1",
+              )
+              .get()
+          : db
+              .prepare(
+                "SELECT s.* FROM signals s JOIN allocations a ON a.signal_id=s.id WHERE a.user_id=? ORDER BY s.created_at DESC,s.id DESC LIMIT 1",
+              )
+              .get(user.id);
       return send({
         signals: rows.map(serializeSignal),
+        latestSignal: latest ? serializeSignal(latest) : null,
         user: publicUser(user, now()),
         stats: {
           closed: closed.length,
@@ -421,6 +474,8 @@ export async function createApp(options = {}) {
     }
     if (!path.startsWith("/api/admin/")) throw error(404, "المسار غير موجود.");
     const { user: admin } = requireAdmin(req);
+    if (method === "GET" && path === "/api/admin/research/bybit")
+      return send(await bybitResearch());
     if (method === "GET" && path === "/api/admin/overview") {
       return send({
         users: db
@@ -705,6 +760,7 @@ export async function createApp(options = {}) {
     ["/members", ["index.html", "text/html; charset=utf-8"]],
     ["/admin", ["index.html", "text/html; charset=utf-8"]],
     ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
+    ["/time-zones.js", ["time-zones.js", "text/javascript; charset=utf-8"]],
     ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
     ["/icon.svg", ["icon.svg", "image/svg+xml"]],
     ["/assets/wetagold-mark.png", ["assets/wetagold-mark.png", "image/png"]],
