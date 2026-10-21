@@ -98,6 +98,8 @@ const price = (value) =>
 const inputDate = (value) => localInput(value, displayZone);
 const isoDate = (value) => localInputToIso(value, displayZone);
 const active = () => Boolean(user?.accessActive);
+const canViewChart = () =>
+  user?.role === "admin" && active() && !user.mustChangePassword;
 const element = (tag, text, className = "") => {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
@@ -399,6 +401,7 @@ function setSession(payload) {
   $("#usersTable").replaceChildren();
   $("#auditLog").replaceChildren();
   $("#chartContainer").replaceChildren();
+  $("#chartPanel").hidden = true;
   $("#adminTelegramStatus").textContent = "";
   $("#deliveryStatus").textContent = "";
   $("#backupStatus").textContent = "";
@@ -452,6 +455,8 @@ function setSession(payload) {
 
 function renderAccount() {
   if (!user) return;
+  $("#chartPanel").hidden = !canViewChart();
+  if (!canViewChart()) $("#chartContainer").replaceChildren();
   const admin = user.role === "admin";
   $("#usedStat").textContent = admin ? "إدارة" : String(user.used);
   $("#remainingStat").textContent = admin
@@ -487,7 +492,12 @@ function renderAccount() {
 }
 
 function loadChart() {
-  if (!user || !active()) return;
+  if (!canViewChart()) {
+    $("#chartContainer").replaceChildren();
+    $("#chartPanel").hidden = true;
+    return;
+  }
+  $("#chartPanel").hidden = false;
   const iframe = document.createElement("iframe");
   const params = new URLSearchParams({
     symbol: "OANDA:XAUUSD",
@@ -944,7 +954,7 @@ async function refreshOnce() {
     csrf = session.csrf;
     renderAccount();
     if (active()) {
-      if (!$("#chartContainer iframe")) loadChart();
+      if (canViewChart() && !$("#chartContainer iframe")) loadChart();
       const result = await api("/api/signals");
       if (version !== generation) return;
       user = result.user;
@@ -1039,6 +1049,7 @@ $("#logoutButton").addEventListener("click", async () => {
 $("#refreshButton").addEventListener("click", refresh);
 $$("[data-interval]").forEach((button) =>
   button.addEventListener("click", () => {
+    if (!canViewChart()) return;
     chartInterval = button.dataset.interval;
     $$("[data-interval]").forEach((item) => {
       const selected = item === button;
@@ -1049,6 +1060,7 @@ $$("[data-interval]").forEach((button) =>
   }),
 );
 $("#expandChart").addEventListener("click", () => {
+  if (!canViewChart()) return;
   const expanded = $("#chartPanel").classList.toggle("expanded");
   $("#expandChart").textContent = expanded ? "تصغير" : "تكبير";
   $("#expandChart").setAttribute("aria-expanded", String(expanded));

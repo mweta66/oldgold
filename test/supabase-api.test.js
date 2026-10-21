@@ -676,9 +676,10 @@ test("a password verification outage is not reported as a wrong password and doe
   assert.equal(f.tables.wg_sessions.length, 1);
 });
 
-test("Supabase Telegram webhook/job are secret-protected and publishing sends the durable outbox immediately", async (t) => {
-  const f = await fixture(t),
+test("Supabase Telegram webhook/job are secret-protected and publishing sends text to the verified private group and entitled member immediately", async (t) => {
+  const f = await fixture(t, { TELEGRAM_GROUP_CHAT_ID: "-1001" }),
     admin = await f.login();
+  f.tables.wg_profiles[0].telegram_chat_id = "999";
   const path = "/api/telegram/webhook",
     raw = "a".repeat(64);
   const data = {
@@ -719,6 +720,15 @@ test("Supabase Telegram webhook/job are secret-protected and publishing sends th
     state: "pending",
     attempts: 0,
   });
+  f.tables.wg_outbox.push({
+    id: 2,
+    event_id: 1,
+    signal_id: 1,
+    user_id: null,
+    destination: "-1001",
+    state: "pending",
+    attempts: 0,
+  });
   f.tables.wg_signal_events.push({
     id: 1,
     kind: "publish",
@@ -736,7 +746,15 @@ test("Supabase Telegram webhook/job are secret-protected and publishing sends th
     ).status,
     201,
   );
-  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent.length, 2);
+  assert.deepEqual(f.sent.map((s) => s.chat_id).sort(), ["-1001", "1001"]);
+  assert.ok(
+    f.sent.every(
+      (s) =>
+        typeof s.text === "string" &&
+        !/iframe|widgetembed|data:image|tradingview\.com/i.test(s.text),
+    ),
+  );
   assert.match(f.sent[0].text, /OANDA:XAUUSD/);
   assert.equal(f.tables.wg_outbox[0].state, "sent");
   assert.equal(

@@ -178,6 +178,13 @@ test("private owner-managed group receives publication, opening, TP and SL; upda
   await update(next.body.id, "open");
   await update(next.body.id, "stopped");
   assert.equal(sent.filter((s) => s.chat_id === "-1001").length, 6);
+  assert.ok(
+    sent.every(
+      (s) =>
+        typeof s.text === "string" &&
+        !/iframe|widgetembed|data:image|tradingview\.com/i.test(s.text),
+    ),
+  );
   assert.match(sent.at(-1).text, /وقف الخسارة SL/);
   assert.equal(sent.filter((s) => s.chat_id === "123").length, 3);
   assert.equal(

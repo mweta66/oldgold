@@ -174,51 +174,6 @@
               <div class="empty-state">لا توجد إشارات متاحة لحسابك حاليًا.</div>
             </div>
           </article>
-          <article class="panel chart-panel" id="chartPanel">
-            <div class="panel-head">
-              <div>
-                <h2>شارت الذهب</h2>
-                <span class="muted small">TradingView · OANDA:XAUUSD</span>
-              </div>
-              <div class="chart-actions">
-                <div class="timeframes" aria-label="فريم الشارت" dir="ltr">
-                  <button
-                    type="button"
-                    data-interval="1"
-                    aria-pressed="true"
-                    class="selected"
-                  >
-                    1M</button
-                  ><button
-                    type="button"
-                    data-interval="15"
-                    aria-pressed="false"
-                  >
-                    15M
-                  </button>
-                </div>
-                <button
-                  id="expandChart"
-                  class="secondary-btn small"
-                  type="button"
-                  aria-expanded="false"
-                >
-                  تكبير
-                </button>
-              </div>
-            </div>
-            <div class="chart" id="chartContainer"></div>
-            <p class="small muted">
-              السعر المرجعي داخل الشارت. قد يختلف عن سعر التنفيذ لدى وسيطك.
-            </p>
-            <a
-              class="text-link small"
-              href="https://www.tradingview.com/chart/?symbol=OANDA%3AXAUUSD"
-              target="_blank"
-              rel="noopener noreferrer"
-              >افتح الشارت على TradingView ↗</a
-            >
-          </article>
         </div>
         <article class="panel history-panel" id="tradeHistory">
           <div class="panel-head">
@@ -417,6 +372,49 @@
           </button>
         </div>
         <p id="adminMessage" class="message" role="status" hidden></p>
+        <article class="panel chart-panel" id="chartPanel" hidden>
+          <div class="panel-head">
+            <div>
+              <h3>شارت الذهب · خاص بالمدير</h3>
+              <span class="muted small">TradingView · OANDA:XAUUSD</span>
+            </div>
+            <div class="chart-actions">
+              <div class="timeframes" aria-label="فريم الشارت" dir="ltr">
+                <button
+                  type="button"
+                  data-interval="1"
+                  aria-pressed="true"
+                  class="selected"
+                >
+                  1M</button
+                ><button type="button" data-interval="15" aria-pressed="false">
+                  15M
+                </button>
+              </div>
+              <button
+                id="expandChart"
+                class="secondary-btn small"
+                type="button"
+                aria-expanded="false"
+              >
+                تكبير
+              </button>
+            </div>
+          </div>
+          <div class="chart" id="chartContainer"></div>
+          <p class="small muted">
+            للمراجعة الشخصية للمدير فقط؛ لا يظهر للمشتركين ولا يُرسل إلى
+            Telegram. السعر المرجعي داخل الشارت قد يختلف عن سعر التنفيذ لدى
+            وسيطك، وإخفاؤه لا يحوّله إلى مصدر لتوليد الإشارات آليًا.
+          </p>
+          <a
+            class="text-link small"
+            href="https://www.tradingview.com/chart/?symbol=OANDA%3AXAUUSD"
+            target="_blank"
+            rel="noopener noreferrer"
+            >افتح الشارت على TradingView ↗</a
+          >
+        </article>
         <article class="panel">
           <h3>مختبر Bybit · محاكاة آخر ٤٨ ساعة</h3>
           <p class="muted small">
@@ -636,9 +634,10 @@
               </li>
               <li>
                 أنشئ جروبًا خاصًا بدون اسم مستخدم عام، واقفل صلاحية إضافة
-                الأعضاء للجميع. أنت مالك الجروب، والمشرف الآخر الوحيد هو البوت
-                للإرسال بدون دعوة أو حظر أعضاء أو ترقية مشرفين. ألغِ روابط
-                الدعوة القديمة ولا تنشر رابطًا يسمح بدخول مباشر.
+                الأعضاء وإرسال النصوص والوسائط للأعضاء العاديين. أنت مالك
+                الجروب، والمشرف الآخر الوحيد هو البوت للإرسال بدون دعوة أو حظر
+                أعضاء أو ترقية مشرفين. ألغِ روابط الدعوة القديمة ولا تنشر رابطًا
+                يسمح بدخول مباشر.
               </li>
               <li>
                 اربط حساب المدير بـ Telegram ثم أضف رقم الجروب في إعدادات الخادم

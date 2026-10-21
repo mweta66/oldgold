@@ -27,25 +27,27 @@ async function brandedPage(t, options = {}, makeFixture = fixture) {
     viewport: { width: 1440, height: 1000 },
     ...options,
   });
-  await context.route("https://www.tradingview.com/**", (route) =>
-    route.fulfill({
+  const chartRequests = [];
+  await context.route("https://www.tradingview.com/**", (route) => {
+    chartRequests.push(route.request().url());
+    return route.fulfill({
       status: 200,
       contentType: "text/html",
       body: "<!doctype html><title>Provider test boundary</title>",
-    }),
-  );
+    });
+  });
   const page = await context.newPage(),
     errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   t.after(() =>
     assert.deepEqual(errors, [], "Unexpected browser JavaScript errors"),
   );
-  return { f, context, page };
+  return { f, context, page, chartRequests };
 }
 
 test("production-shaped Vercel HTTPS browser login uses the real Supabase handler, secure cookies and account isolation", async (t) => {
   const alias = "https://wetagold-browser-test-team.vercel.app";
-  const { f, page, context } = await brandedPage(
+  const { f, page, context, chartRequests } = await brandedPage(
     t,
     { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
     () =>
@@ -65,6 +67,7 @@ test("production-shaped Vercel HTTPS browser login uses the real Supabase handle
   });
   await page.goto(alias);
   for (const email of ["admin@example.test", "member@example.test"]) {
+    const previousChartRequests = chartRequests.length;
     await page.locator("#loginButton").click();
     await page.locator("#loginEmail").fill(email);
     await page.locator("#loginPassword").fill(CLOUD_PASSWORD);
@@ -98,12 +101,36 @@ test("production-shaped Vercel HTTPS browser login uses the real Supabase handle
     );
     assert.equal(await page.locator("#landing").isVisible(), false);
     if (email.startsWith("admin")) {
+      assert.equal(
+        await page.locator("#adminPanel #chartPanel").isVisible(),
+        true,
+      );
+      assert.equal(await page.locator("#chartContainer iframe").count(), 1);
       await page.locator("#siteTheme").selectOption("ocean");
       await page.locator("#saveTheme").click();
       await page.waitForFunction(
         () => document.documentElement.dataset.theme === "ocean",
       );
     } else {
+      assert.equal(await page.locator("#chartPanel").isVisible(), false);
+      assert.equal(await page.locator("iframe").count(), 0);
+      assert.equal(chartRequests.length, previousChartRequests);
+      await page.evaluate(() => {
+        document.querySelector('[data-interval="15"]').click();
+        document.querySelector("#expandChart").click();
+      });
+      await page.locator("#refreshButton").click();
+      await page.waitForFunction(
+        () => !document.querySelector("#refreshButton").disabled,
+      );
+      assert.equal(await page.locator("#chartContainer iframe").count(), 0);
+      assert.equal(chartRequests.length, previousChartRequests);
+      assert.equal(
+        await page
+          .locator("#chartPanel")
+          .evaluate((el) => el.classList.contains("expanded")),
+        false,
+      );
       assert.equal(
         await page.evaluate(
           async () => (await fetch("/api/admin/overview")).status,
@@ -876,6 +903,8 @@ test("desktop and mobile: real login, account CRUD, publication, member quota, c
   );
   assert.equal(await page.locator("#adminPanel").isVisible(), false);
   assert.equal(await page.locator("#adminNav").isVisible(), false);
+  assert.equal(await page.locator("#chartPanel").isVisible(), false);
+  assert.equal(await page.locator("iframe").count(), 0);
   assert.match(await page.locator("#history").textContent(), /100\.00/);
   assert.match(await page.locator("#accessNotice").textContent(), /انتهت حصتك/);
   assert.equal(
@@ -1247,12 +1276,8 @@ test("country timezones persist across logins, local-day filters roll over corre
     await page.locator("#currentSignal time").getAttribute("datetime"),
     new Date(instant).toISOString(),
   );
-  assert.equal(
-    new URL(
-      await page.locator("#chartContainer iframe").getAttribute("src"),
-    ).searchParams.get("timezone"),
-    "Asia/Tokyo",
-  );
+  assert.equal(await page.locator("#chartContainer iframe").count(), 0);
+  assert.equal(await page.locator("#chartPanel").isVisible(), false);
   await page.locator("#historyFrom").fill("2026-01-16");
   await page.locator("#historyTo").fill("2026-01-16");
   await page.locator("#applyHistory").click();
