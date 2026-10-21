@@ -145,6 +145,7 @@ export async function cloudReadiness(env, fetcher = fetch) {
           !/^prj_[A-Za-z0-9]+$/.test(p.id)
         )
           continue;
+        if (matches.has(p.id)) continue;
         const params = new URLSearchParams(query);
         const detail = await request(
           "vercel",
@@ -250,6 +251,18 @@ export async function cloudReadiness(env, fetcher = fetch) {
         ) {
           let text = "";
           let reader;
+          // Some streaming endpoints do not flush headers until the first log.
+          // Trigger the health request concurrently, not after awaiting headers.
+          const probe = (async () => {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            if (healthEndpoint)
+              await fetcher(healthEndpoint, {
+                method: "GET",
+                redirect: "error",
+                signal: AbortSignal.timeout(10000),
+                headers: {},
+              });
+          })().catch(() => {});
           try {
             const response = await fetcher(
               `https://api.vercel.com/v1/projects/${p.id}/deployments/${deploymentId}/runtime-logs?${params}`,
@@ -264,21 +277,19 @@ export async function cloudReadiness(env, fetcher = fetch) {
             if (!response.ok)
               runtimeDiagnostics.error = `HTTP_${response.status}`;
             else {
-              // Runtime logs are streamed. Generate a health request while the
-              // stream is open instead of depending on retained historical logs.
-              if (healthEndpoint)
-                await fetcher(healthEndpoint, {
-                  method: "GET",
-                  redirect: "error",
-                  signal: AbortSignal.timeout(10000),
-                  headers: {},
-                });
               reader = response.body.getReader();
               const decoder = new TextDecoder();
               for (let n = 0; n < 16 && text.length < 131072; n++) {
                 const chunk = await reader.read();
                 if (chunk.done) break;
                 text += decoder.decode(chunk.value, { stream: true });
+                if (
+                  text.includes("\n") &&
+                  /ReferenceError|TypeError|SyntaxError|ERR_MODULE_NOT_FOUND/.test(
+                    text,
+                  )
+                )
+                  break;
               }
             }
           } catch {
@@ -290,6 +301,7 @@ export async function cloudReadiness(env, fetcher = fetch) {
             runtimeDiagnostics.streamIncomplete = true;
           } finally {
             if (reader) await reader.cancel().catch(() => {});
+            await probe;
           }
           const patterns = {
             ERR_MODULE_NOT_FOUND: /ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/,
