@@ -138,6 +138,11 @@ function fixture(options = {}) {
         return json({ envs: savedEnv });
       }
       if (url.pathname === "/v13/deployments") {
+        assert.equal(url.searchParams.get("forceNew"), "1");
+        assert.equal(
+          url.searchParams.get("skipAutoDetectionConfirmation"),
+          "1",
+        );
         assert.equal(body.gitSource.ref, env.PRODUCTION_COMMIT);
         assert.equal(body.target, "production");
         return json({ id: "dpl_Test", readyState: "READY" });

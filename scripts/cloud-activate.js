@@ -474,16 +474,20 @@ export async function activateCloud(
       "VERCEL_FRAMEWORK_OVERRIDE_REJECTED",
     );
     stage("deployment");
-    const deployment = await vercel(`/v13/deployments${suffix}`, "POST", {
-      name: detail.name,
-      project: detail.id,
-      target: "production",
-      gitSource: {
-        type: "github",
-        repoId: String(env.GITHUB_REPOSITORY_ID),
-        ref: env.PRODUCTION_COMMIT,
+    const deployment = await vercel(
+      `/v13/deployments${suffix}${suffix ? "&" : "?"}forceNew=1&skipAutoDetectionConfirmation=1`,
+      "POST",
+      {
+        name: detail.name,
+        project: detail.id,
+        target: "production",
+        gitSource: {
+          type: "github",
+          repoId: String(env.GITHUB_REPOSITORY_ID),
+          ref: env.PRODUCTION_COMMIT,
+        },
       },
-    });
+    );
     assert(
       /^dpl_[A-Za-z0-9]+$/.test(deployment.id || ""),
       "DEPLOYMENT_RESPONSE_INVALID",
