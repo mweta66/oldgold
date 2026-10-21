@@ -9,6 +9,23 @@ let user = null,
   generation = 0;
 let serviceReady = false,
   serviceCheck = null;
+let historyData = null,
+  historyPage = 1,
+  historySerial = 0,
+  historyBusy = false;
+let historyFilters = { status: "all", direction: "all", from: "", to: "" };
+let themeDirty = false,
+  themeSaving = false;
+function applyHistoryFilters() {
+  historyFilters = {
+    status: $("#historyFilter").value,
+    direction: $("#historyDirection").value,
+    from: $("#historyFrom").value,
+    to: $("#historyTo").value,
+  };
+  historyPage = 1;
+  void loadHistory();
+}
 const THEMES = ["gold", "ocean", "emerald", "ivory"];
 function applyTheme(theme) {
   if (!THEMES.includes(theme)) return;
@@ -21,7 +38,7 @@ function applyTheme(theme) {
 async function syncAppearance() {
   try {
     const data = await api("/api/appearance");
-    applyTheme(data.theme);
+    if (!themeSaving) applyTheme(data.theme);
   } catch {
     /* The default theme remains usable while the service is unavailable. */
   }
@@ -131,21 +148,40 @@ function showServiceUnavailable(err) {
 
 function clearSignals() {
   signals = [];
+  historySerial++;
+  historyData = null;
+  historyBusy = false;
   $("#currentSignal").replaceChildren(
     element("div", "لا توجد إشارات متاحة لحسابك حاليًا.", "empty-state"),
   );
   $("#history").replaceChildren(
-    element("div", "لا توجد إشارات مستلمة.", "empty-state"),
+    element(
+      "div",
+      "سجل الحساب غير محمّل. اضغط تحديث السجل للمحاولة مجددًا.",
+      "empty-state",
+    ),
   );
+  $("#historySummary").textContent = "";
+  $("#historyPage").textContent = "صفحة 1";
+  $("#historyPrev").disabled = true;
+  $("#historyNext").disabled = true;
+  $("#history").setAttribute("aria-busy", "false");
+  message("#historyError", "");
   $("#winStat").textContent = "—";
   $("#winNote").textContent = "لا توجد نتائج مغلقة بعد";
 }
 
 function setSession(payload) {
   generation++;
+  themeDirty = false;
+  themeSaving = false;
+  $("#saveTheme").disabled = false;
   user = payload?.user || null;
   csrf = payload?.csrf || "";
   clearSignals();
+  historyPage = 1;
+  $("#historyForm").reset();
+  historyFilters = { status: "all", direction: "all", from: "", to: "" };
   overview = null;
   $("#usersTable").replaceChildren();
   $("#auditLog").replaceChildren();
@@ -224,6 +260,7 @@ function renderAccount() {
     $("#telegramLink").removeAttribute("href");
   }
   $("#signalWorkspace").hidden = !active();
+  $("#tradeHistory").hidden = !active();
   message(
     "#accessNotice",
     !active()
@@ -287,6 +324,8 @@ function signalCard(signal) {
     element("span", `رقم الإشارة: #${signal.id} · ${signal.symbol}`),
     element("span", `العائد للمخاطرة: 1 : ${risk.toFixed(2)}`),
     element("span", `صدرت: ${date(signal.createdAt)}`),
+    element("span", `فُتحت: ${date(signal.openedAt)}`),
+    element("span", `أُغلقت / انتهت: ${date(signal.closedAt)}`),
     element("span", `صلاحية الدخول: ${date(signal.expiresAt)}`),
     element("span", `السعر المرجعي عند النشر: ${price(signal.referencePrice)}`),
   );
@@ -328,58 +367,180 @@ function renderSignals() {
   const activeSignals = signals.filter((signal) =>
     ["pending", "open"].includes(signal.status),
   );
-  const current = activeSignals.length ? activeSignals : signals.slice(0, 1);
   $("#currentSignal").replaceChildren(
-    ...(current.length
-      ? current.map(signalCard)
-      : [element("div", "لا توجد إشارات متاحة لحسابك حاليًا.", "empty-state")]),
+    ...(activeSignals.length
+      ? activeSignals.map(signalCard)
+      : [
+          element(
+            "div",
+            "لا توجد إشارات نشطة الآن. الصفقات السابقة موجودة في سجل الصفقات بالأسفل.",
+            "empty-state",
+          ),
+        ]),
   );
-  const filter = $("#historyFilter").value,
-    visible = signals.filter(
-      (signal) => filter === "all" || signal.status === filter,
-    );
+}
+
+function stamp(value, fallback = "غير مسجّل") {
+  if (!Number.isFinite(value)) return element("span", fallback, "muted small");
+  const iso = new Date(value).toISOString(),
+    node = element("time", undefined, "date-stamp");
+  node.dateTime = iso;
+  node.dir = "ltr";
+  node.append(
+    element("strong", iso.slice(0, 10)),
+    element("span", `${iso.slice(11, 19)} UTC`),
+  );
+  return node;
+}
+
+function renderHistory() {
+  if (!historyData || !user || !active()) return;
+  const { signals: rows, total, available, page, pageSize } = historyData;
   const history = $("#history");
   history.className = "table-wrap";
   history.replaceChildren();
-  if (!visible.length) {
-    history.append(element("div", "لا توجد إشارات مطابقة.", "empty-state"));
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  $("#historySummary").textContent = total
+    ? `عرض ${rows.length ? (page - 1) * pageSize + 1 : 0}–${Math.min(page * pageSize, total)} من ${total} صفقة / إشارة مطابقة، من أصل ${available} في سجل الحساب.`
+    : `${available} صفقة / إشارة في سجل الحساب.`;
+  $("#historyPage").textContent = `صفحة ${page} من ${pages}`;
+  $("#historyPrev").disabled = historyBusy || page <= 1;
+  $("#historyNext").disabled = historyBusy || page >= pages;
+  if (!rows.length) {
+    const text = available
+      ? "لا توجد صفقات مطابقة للفلاتر أو لهذه الصفحة. امسح الفلاتر لعرض السجل."
+      : user.role === "admin"
+        ? "لسه مفيش صفقات منشورة. انشر إشارة حقيقية من لوحة المدير عشان تظهر هنا؛ الشارت مش بيولّد صفقات تلقائيًا."
+        : !user.remaining
+          ? "لا توجد صفقات مخصصة لحسابك وحصتك من الإشارات الجديدة غير متاحة. تواصل مع المدير لتفعيل حصة."
+          : "لسه مفيش صفقات اتخصصت لحسابك. الإشارات الجديدة هتظهر بعد نشرها بشرط سريان التفعيل والحصة؛ الإشارات السابقة للاشتراك لا تتضاف تلقائيًا.";
+    history.append(element("div", text, "empty-state"));
+    if (!available && user.role === "admin") {
+      const link = element("a", "اذهب لنشر إشارة", "text-link");
+      link.href = "#signalForm";
+      history.append(link);
+    }
     return;
   }
-  const table = element("table"),
+  const table = element("table", undefined, "history-table"),
     head = element("thead"),
     tr = element("tr"),
     body = element("tbody");
   for (const label of [
+    "تاريخ ووقت النشر",
     "الإشارة",
+    "الحالة",
     "الاتجاه",
     "الدخول",
     "الوقف",
     "الهدف",
-    "الحالة",
-    "وقت النشر",
-  ])
-    tr.append(element("th", label));
+    "وقت الفتح",
+    "الإغلاق / الانتهاء",
+    "صلاحية الدخول",
+  ]) {
+    const cell = element("th", label);
+    cell.scope = "col";
+    tr.append(cell);
+  }
   head.append(tr);
-  for (const signal of visible) {
+  for (const signal of rows) {
     const row = element("tr");
-    row.append(
-      element("td", `#${signal.id}`),
-      element("td", signal.direction === "buy" ? "شراء" : "بيع"),
+    const state = element(
+      "span",
+      statuses[signal.status],
+      `badge ${signal.status}`,
     );
-    for (const value of [signal.entry, signal.stop, signal.target]) {
-      const cell = element("td", price(value));
-      cell.dir = "ltr";
+    const closed = ["target", "stopped", "cancelled", "expired"].includes(
+      signal.status,
+    );
+    const cells = [
+      ["النشر", stamp(signal.createdAt)],
+      ["رقم الإشارة", element("strong", `#${signal.id}`)],
+      ["الحالة", state],
+      [
+        "الاتجاه",
+        element(
+          "span",
+          signal.direction === "buy" ? "شراء" : "بيع",
+          signal.direction === "buy" ? "positive" : "negative",
+        ),
+      ],
+      ["الدخول", element("span", price(signal.entry), "number")],
+      ["الوقف", element("span", price(signal.stop), "number negative")],
+      ["الهدف", element("span", price(signal.target), "number positive")],
+      [
+        "الفتح",
+        stamp(
+          signal.openedAt,
+          signal.status === "pending" ? "لم تُفتح بعد" : "غير مسجّل",
+        ),
+      ],
+      [
+        "الإغلاق / الانتهاء",
+        stamp(signal.closedAt, closed ? "غير مسجّل" : "لم تنتهِ بعد"),
+      ],
+      ["صلاحية الدخول", stamp(signal.expiresAt)],
+    ];
+    for (const [label, content] of cells) {
+      const cell = element("td");
+      cell.dataset.label = label;
+      cell.append(content);
       row.append(cell);
     }
-    const state = element("td");
-    state.append(
-      element("span", statuses[signal.status], `badge ${signal.status}`),
-    );
-    row.append(state, element("td", date(signal.createdAt)));
     body.append(row);
   }
   table.append(head, body);
   history.append(table);
+}
+
+async function loadHistory() {
+  if (!user || !active()) return;
+  const serial = ++historySerial,
+    version = generation;
+  historyBusy = true;
+  message("#historyError", "");
+  $("#history").setAttribute("aria-busy", "true");
+  $("#history").replaceChildren(
+    element("div", "جارٍ تحميل سجل الصفقات الحقيقي…", "empty-state"),
+  );
+  $("#historyPrev").disabled = true;
+  $("#historyNext").disabled = true;
+  const params = new URLSearchParams({
+    page: String(historyPage),
+    status: historyFilters.status,
+    direction: historyFilters.direction,
+  });
+  if (historyFilters.from) params.set("from", historyFilters.from);
+  if (historyFilters.to) params.set("to", historyFilters.to);
+  try {
+    const data = await api(`/api/history?${params}`);
+    if (serial !== historySerial || version !== generation) return;
+    const lastPage = Math.max(1, Math.ceil(data.total / data.pageSize));
+    if (data.page > lastPage) {
+      historyPage = lastPage;
+      return await loadHistory();
+    }
+    historyData = data;
+    historyBusy = false;
+    renderHistory();
+  } catch (err) {
+    if (serial !== historySerial || version !== generation) return;
+    historyData = null;
+    $("#history").replaceChildren(
+      element(
+        "div",
+        "السجل غير متاح الآن؛ ده مش معناه إن مفيش صفقات. اضغط تحديث السجل للمحاولة مجددًا.",
+        "empty-state",
+      ),
+    );
+    $("#historySummary").textContent = "";
+    message("#historyError", err.message);
+  } finally {
+    if (serial === historySerial && version === generation) {
+      historyBusy = false;
+      $("#history").setAttribute("aria-busy", "false");
+    }
+  }
 }
 
 function editUser(account) {
@@ -401,8 +562,8 @@ function editUser(account) {
 function renderAdmin() {
   if (!overview || user?.role !== "admin") return;
   if (THEMES.includes(overview.theme)) {
-    $("#siteTheme").value = overview.theme;
-    applyTheme(overview.theme);
+    if (!themeDirty && !themeSaving) $("#siteTheme").value = overview.theme;
+    if (!themeSaving) applyTheme(overview.theme);
   }
   $("#pauseButton").textContent = overview.paused
     ? "استئناف نشر الإشارات"
@@ -547,11 +708,13 @@ async function refreshOnce() {
       signals = result.signals;
       renderAccount();
       renderSignals();
+      await loadHistory();
+      if (version !== generation) return;
       $("#winStat").textContent = result.stats.closed
         ? `${Math.round((result.stats.wins / result.stats.closed) * 100)}%`
         : "—";
       $("#winNote").textContent = result.stats.closed
-        ? `من ${result.stats.closed} إشارة مغلقة في السجل المعروض`
+        ? `من ${result.stats.closed} إشارة مغلقة في ملخص آخر 90 يومًا (حتى 200 إشارة)`
         : "لا توجد نتائج مغلقة بعد";
     } else {
       clearSignals();
@@ -639,7 +802,36 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && $("#chartPanel").classList.contains("expanded"))
     $("#expandChart").click();
 });
-$("#historyFilter").addEventListener("change", renderSignals);
+$("#historyForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  applyHistoryFilters();
+});
+$("#historyFilter").addEventListener("change", () => {
+  applyHistoryFilters();
+});
+$("#historyDirection").addEventListener("change", () => {
+  applyHistoryFilters();
+});
+$("#resetHistory").addEventListener("click", () => {
+  $("#historyForm").reset();
+  applyHistoryFilters();
+});
+$("#reloadHistory").addEventListener("click", () => void loadHistory());
+$("#historyPrev").addEventListener("click", () => {
+  if (historyBusy || historyPage <= 1) return;
+  historyPage--;
+  void loadHistory();
+});
+$("#historyNext").addEventListener("click", () => {
+  if (
+    historyBusy ||
+    !historyData ||
+    historyPage * historyData.pageSize >= historyData.total
+  )
+    return;
+  historyPage++;
+  void loadHistory();
+});
 $("#passwordForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.submitter;
@@ -796,21 +988,32 @@ $("#retryTelegram").addEventListener("click", async () => {
   }
 });
 $("#year").textContent = new Date().getFullYear();
+$("#siteTheme").addEventListener("change", () => {
+  themeDirty = true;
+});
 $("#themeForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const selectedTheme = $("#siteTheme").value,
+    version = generation;
+  themeSaving = true;
   $("#saveTheme").disabled = true;
   try {
     await api("/api/admin/settings", {
       method: "PATCH",
-      data: { theme: $("#siteTheme").value },
+      data: { theme: selectedTheme },
     });
-    applyTheme($("#siteTheme").value);
+    if (version !== generation) return;
+    themeDirty = false;
+    applyTheme(selectedTheme);
     message("#themeMessage", "تم حفظ الثيم للموقع كله.");
     await refresh();
   } catch (err) {
-    message("#themeMessage", err.message);
+    if (version === generation) message("#themeMessage", err.message);
   } finally {
-    $("#saveTheme").disabled = false;
+    if (version === generation) {
+      themeSaving = false;
+      $("#saveTheme").disabled = false;
+    }
   }
 });
 async function checkService() {

@@ -590,6 +590,58 @@ nav {
   padding: 40px 15px;
   line-height: 2;
 }
+.history-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px 0;
+  border-block: 1px solid var(--line);
+}
+.history-filters .field {
+  margin: 0;
+  min-width: 0;
+}
+.history-filter-actions {
+  grid-column: 1/-1;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 18px;
+}
+.history-table {
+  min-width: 1080px;
+}
+.date-stamp {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.date-stamp strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+}
+.date-stamp span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.history-table td:first-child {
+  border-inline-start: 2px solid var(--gold);
+}
+.history-table .number {
+  direction: ltr;
+  display: inline-block;
+}
 .table-wrap {
   overflow: auto;
 }
@@ -1038,6 +1090,73 @@ footer {
   }
 }
 @media (max-width: 600px) {
+  .history-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .history-table,
+  .history-table tbody {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+  .history-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .history-table tbody {
+    display: grid;
+    gap: 14px;
+  }
+  .history-table tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--field);
+  }
+  .history-table td {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    font-size: 12px;
+  }
+  .history-table td::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--muted);
+    font-size: 10px;
+    margin-bottom: 6px;
+  }
+  .history-table td:first-child {
+    grid-column: 1/-1;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .history-table .date-stamp strong {
+    font-size: 11px;
+  }
+  .history-table td:first-child .date-stamp strong {
+    font-size: 15px;
+    color: var(--gold);
+  }
+  .history-table .date-stamp span {
+    font-size: 9px;
+  }
+  .history-pagination {
+    gap: 10px;
+  }
   .appearance-panel {
     grid-template-columns: 1fr;
     gap: 12px;

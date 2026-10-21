@@ -31,6 +31,12 @@ test("Supabase migration and RPCs execute on PostgreSQL, not an in-memory applic
       "utf8",
     ),
   );
+  await db.exec(
+    await readFile(
+      new URL("../supabase/migrations/002_trade_history.sql", import.meta.url),
+      "utf8",
+    ),
+  );
   const rpc = async (name, args, casts) =>
     (
       await db.query(
@@ -249,6 +255,155 @@ test("Supabase migration and RPCs execute on PostgreSQL, not an in-memory applic
         (await db.query("select used from wg_profiles where id=$1", [member]))
           .rows[0].used,
         1,
+      );
+    },
+  );
+
+  await t.test(
+    "full trade history is paged beyond 90 days and 200 records, filtered in UTC, isolated and read without consuming quota",
+    async () => {
+      await seed();
+      await db.query(
+        "insert into wg_signals(request_id,direction,entry,stop,target,reference_price,quote_at,created_at,expires_at,author_id,status) select gen_random_uuid()::text,'buy',100,99,101.5,100,now()-interval '120 days',now()-interval '120 days'+n*interval '1 second',now()-interval '119 days',$1,'target' from generate_series(1,215) n",
+        [admin],
+      );
+      await db.query(
+        "insert into wg_allocations(user_id,signal_id) select $1,id from wg_signals",
+        [member],
+      );
+      const history = (
+        page = 1,
+        status = "all",
+        from = null,
+        to = null,
+        user = member,
+      ) =>
+        rpc(
+          "wg_history",
+          [user, page, status, "all", from, to],
+          [
+            "::uuid",
+            "::integer",
+            "::text",
+            "::text",
+            "::timestamptz",
+            "::timestamptz",
+          ],
+        );
+      const first = await history(),
+        second = await history(2),
+        last = await history(11);
+      assert.equal(first.available, 215);
+      assert.equal(first.total, 215);
+      assert.equal(first.signals.length, 20);
+      assert.equal(last.signals.length, 15);
+      assert.ok(
+        first.signals.every(
+          (s) => !second.signals.some((other) => s.id === other.id),
+        ),
+      );
+      assert.equal((await history(1, "stopped")).total, 0);
+      assert.equal(
+        (await history(1, "all", null, null, unlinked)).available,
+        0,
+      );
+      assert.equal(
+        (await db.query("select used from wg_profiles where id=$1", [member]))
+          .rows[0].used,
+        0,
+      );
+      assert.equal(
+        (await db.query("select * from wg_get_signals($1)", [member])).rows
+          .length,
+        0,
+      );
+      await assert.rejects(history(0), /WG:/);
+      await assert.rejects(history(1, "bad"), /WG:/);
+      await assert.rejects(history(1, "all", null, null, expired), /WG:/);
+      await db.exec("set role authenticated");
+      try {
+        await assert.rejects(history(), /permission denied/);
+      } finally {
+        await db.exec("reset role");
+      }
+      const published = await publish();
+      await rpc("wg_signal_status", [admin, published.id, "open"]);
+      let row = (
+        await db.query("select * from wg_signals where id=$1", [published.id])
+      ).rows[0];
+      assert.ok(row.opened_at);
+      assert.equal(row.closed_at, null);
+      await rpc("wg_signal_status", [admin, published.id, "target"]);
+      row = (
+        await db.query("select * from wg_signals where id=$1", [published.id])
+      ).rows[0];
+      assert.ok(row.closed_at >= row.opened_at);
+      const today = new Date().toISOString().slice(0, 10) + "T00:00:00.000Z";
+      const tomorrow = new Date(Date.parse(today) + 86400000).toISOString();
+      const filtered = await history(1, "target", today, tomorrow, admin);
+      assert.equal(filtered.signals.length, 1);
+      assert.equal(filtered.signals[0].id, published.id);
+      await db.query(
+        "update wg_signals set status='open',created_at=now()-interval '150 days' where id=$1",
+        [published.id],
+      );
+      assert.ok(
+        (await db.query("select * from wg_get_signals($1)", [admin])).rows.some(
+          (s) => Number(s.id) === published.id,
+        ),
+      );
+    },
+  );
+
+  await t.test(
+    "history migration restores known audit times only and leaves genuinely unknown times empty",
+    async () => {
+      await seed();
+      const known = await publish();
+      await rpc("wg_signal_status", [admin, known.id, "open"]);
+      await rpc("wg_signal_status", [admin, known.id, "target"]);
+      const before = (
+        await db.query(
+          "select opened_at,closed_at from wg_signals where id=$1",
+          [known.id],
+        )
+      ).rows[0];
+      await db.query(
+        "update wg_signals set opened_at=null,closed_at=null where id=$1",
+        [known.id],
+      );
+      const unknown = (
+        await db.query(
+          "insert into wg_signals(request_id,direction,entry,stop,target,reference_price,quote_at,author_id,status) values(gen_random_uuid()::text,'buy',100,99,101.5,100,now(),$1,'target') returning id",
+          [admin],
+        )
+      ).rows[0].id;
+      await db.exec(
+        await readFile(
+          new URL(
+            "../supabase/migrations/002_trade_history.sql",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      );
+      assert.deepEqual(
+        (
+          await db.query(
+            "select opened_at,closed_at from wg_signals where id=$1",
+            [known.id],
+          )
+        ).rows[0],
+        before,
+      );
+      assert.deepEqual(
+        (
+          await db.query(
+            "select opened_at,closed_at from wg_signals where id=$1",
+            [unknown],
+          )
+        ).rows[0],
+        { opened_at: null, closed_at: null },
       );
     },
   );

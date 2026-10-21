@@ -31,7 +31,26 @@ async function brandedPage(t) {
 }
 
 test("Cairo, real logo/watermark and all four administrator-controlled themes work on desktop and mobile", async (t) => {
-  const { f, page } = await brandedPage(t);
+  const { f, page, context } = await brandedPage(t);
+  let releaseOverview,
+    markOverview,
+    firstOverview = true;
+  const overviewGate = new Promise((resolve) => {
+    releaseOverview = resolve;
+  });
+  const overviewSeen = new Promise((resolve) => {
+    markOverview = resolve;
+  });
+  t.after(() => releaseOverview());
+  await context.route("**/api/admin/overview", async (route) => {
+    const response = await route.fetch();
+    if (firstOverview) {
+      firstOverview = false;
+      markOverview();
+      await overviewGate;
+    }
+    await route.fulfill({ response });
+  });
   await page.goto(f.origin);
   await page.evaluate(() => document.fonts.ready);
   assert.match(
@@ -62,6 +81,17 @@ test("Cairo, real logo/watermark and all four administrator-controlled themes wo
   await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
   await page.locator("#submitLogin").click();
   await page.waitForSelector("#themeForm", { state: "visible" });
+  await overviewSeen;
+  await page.locator("#siteTheme").selectOption("ocean");
+  releaseOverview();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  assert.equal(
+    await page.locator("#siteTheme").inputValue(),
+    "ocean",
+    "background refresh must not discard the administrator's unsaved choice",
+  );
   for (const theme of ["ocean", "emerald", "gold", "ivory"]) {
     await page.locator("#siteTheme").selectOption(theme);
     await page.locator("#saveTheme").click();
@@ -387,6 +417,194 @@ test("desktop and mobile: real login, account CRUD, publication, member quota, c
     fullPage: true,
   });
   assert.deepEqual(errors, []);
+});
+
+test("trade history shows real dates, all-time pages, filters, honest errors and mobile cards without spending quota", async (t) => {
+  const { f, page, context } = await brandedPage(t),
+    admin = await f.login();
+  const account = f.account("history-browser@example.test", 30);
+  await f.request("/api/admin/users", {
+    method: "POST",
+    auth: admin,
+    data: account,
+  });
+  const member = await f.login(account.email, account.password);
+  const published = await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  f.advance(1000);
+  await f.request(`/api/admin/signals/${published.body.id}`, {
+    method: "PATCH",
+    auth: admin,
+    data: { status: "open" },
+  });
+  f.advance(1000);
+  await f.request(`/api/admin/signals/${published.body.id}`, {
+    method: "PATCH",
+    auth: admin,
+    data: { status: "target" },
+  });
+  const old =
+      Math.floor((f.now() - 120 * 86400000) / 86400000) * 86400000 +
+      12 * 3600000,
+    day = new Date(old).toISOString().slice(0, 10);
+  for (let n = 0; n < 24; n++) {
+    const id = Number(
+      f.app.db
+        .prepare(
+          "INSERT INTO signals(request_id,symbol,direction,entry,stop,target,created_at,expires_at,quote_at,reference_price,author_id,status) VALUES(?,'OANDA:XAUUSD',?,?,?,?,?,?,?,100,?,?)",
+        )
+        .run(
+          crypto.randomUUID(),
+          n % 2 ? "sell" : "buy",
+          100,
+          n % 2 ? 101 : 99,
+          n % 2 ? 98.5 : 101.5,
+          old + n * 1000,
+          old + 900000,
+          old,
+          admin.body.user.id,
+          n % 2 ? "stopped" : "target",
+        ).lastInsertRowid,
+    );
+    f.app.db
+      .prepare("INSERT INTO allocations(user_id,signal_id) VALUES(?,?)")
+      .run(member.body.user.id, id);
+  }
+  f.app.db
+    .prepare("UPDATE users SET used=25 WHERE id=?")
+    .run(member.body.user.id);
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(account.email);
+  await page.locator("#loginPassword").fill(account.password);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll("#history tbody tr").length === 20 &&
+      document.querySelector("#historySummary").textContent.includes("25"),
+  );
+  assert.equal(await page.locator("#currentSignal .signal-item").count(), 0);
+  const dateNode = page.locator("#history time").first();
+  assert.match(await dateNode.getAttribute("datetime"), /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(await dateNode.textContent(), /UTC/);
+  assert.equal(
+    await page.locator("#history tbody tr").first().locator("time").count(),
+    4,
+  );
+  await page.locator("#historyNext").click();
+  await page.waitForFunction(
+    () => document.querySelectorAll("#history tbody tr").length === 5,
+  );
+  assert.match(await page.locator("#historyPage").textContent(), /صفحة 2/);
+  await page.locator("#historyFrom").fill(day);
+  await page.locator("#historyTo").fill(day);
+  await page.locator("#applyHistory").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#historySummary").textContent.includes("من 24"),
+  );
+  assert.match(await page.locator("#historyPage").textContent(), /صفحة 1/);
+  await page.locator("#historyFilter").selectOption("stopped");
+  await page.waitForFunction(
+    () => document.querySelectorAll("#history tbody tr").length === 12,
+  );
+  await page.locator("#historyDirection").selectOption("buy");
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#history")
+      .textContent.includes("لا توجد صفقات مطابقة"),
+  );
+  await page.locator("#resetHistory").click();
+  await page.waitForFunction(
+    () => document.querySelectorAll("#history tbody tr").length === 20,
+  );
+  const failedRoute = (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "تعذر تحميل السجل للاختبار.",
+        code: "SUPABASE_UNAVAILABLE",
+      }),
+    });
+  await context.route("**/api/history?**", failedRoute);
+  await page.locator("#reloadHistory").click();
+  await page.waitForSelector("#historyError", { state: "visible" });
+  assert.match(
+    await page.locator("#history").textContent(),
+    /مش معناه إن مفيش صفقات/,
+  );
+  assert.equal(await page.locator("#serviceNotice").isVisible(), false);
+  await context.unroute("**/api/history?**", failedRoute);
+  await page.locator("#reloadHistory").click();
+  await page.waitForFunction(
+    () => document.querySelectorAll("#history tbody tr").length === 20,
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > innerWidth,
+    ),
+    false,
+  );
+  const a11y = await new AxeBuilder({ page })
+    .exclude("iframe")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  assert.deepEqual(
+    a11y.violations.map((v) => ({
+      id: v.id,
+      nodes: v.nodes.map((n) => n.target),
+    })),
+    [],
+  );
+  await mkdir("test-results", { recursive: true });
+  await page
+    .locator("#tradeHistory")
+    .screenshot({ path: "test-results/trade-history-mobile.png" });
+  await page
+    .locator("#tradeHistory")
+    .evaluate((el) =>
+      el.scrollIntoView({ block: "start", behavior: "instant" }),
+    );
+  await page.screenshot({
+    path: "test-results/trade-history-mobile-viewport.png",
+  });
+  assert.equal(
+    (await f.request("/api/me", { auth: member })).body.user.used,
+    25,
+  );
+  const payload = (await f.request("/api/history", { auth: member })).body;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const pending = page.waitForRequest(
+    (req) => new URL(req.url()).pathname === "/api/history",
+  );
+  await context.route("**/api/history?**", async (route) => {
+    await gate;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(payload),
+    });
+  });
+  await page.locator("#reloadHistory").click();
+  await pending;
+  await page.locator("#logoutButton").click();
+  await page.waitForSelector("#heroLogin", { state: "visible" });
+  const completed = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/history",
+  );
+  release();
+  await (await completed).finished();
+  await page.waitForFunction(
+    () => document.querySelectorAll("#history tbody tr").length === 0,
+  );
+  assert.equal(await page.locator("#tradeHistory").isVisible(), false);
 });
 
 test("first administrator must replace a temporary password before accessing the admin interface", async (t) => {

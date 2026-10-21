@@ -139,6 +139,34 @@ async function fixture(t, overrides = {}) {
           },
         );
       if (name === "wg_publish") return json({ id: 1, recipients: 1 });
+      if (name === "wg_history") {
+        const available = tables.wg_signals.filter(
+          (s) =>
+            data.p_user === ADMIN ||
+            tables.wg_allocations.some(
+              (a) => a.user_id === data.p_user && a.signal_id === s.id,
+            ),
+        );
+        const rows = available
+          .filter(
+            (s) =>
+              (data.p_status === "all" || s.status === data.p_status) &&
+              (data.p_direction === "all" ||
+                s.direction === data.p_direction) &&
+              (!data.p_from || s.created_at >= data.p_from) &&
+              (!data.p_to || s.created_at < data.p_to),
+          )
+          .sort(
+            (a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id,
+          );
+        return json({
+          available: available.length,
+          total: rows.length,
+          page: data.p_page,
+          pageSize: 20,
+          signals: rows.slice((data.p_page - 1) * 20, data.p_page * 20),
+        });
+      }
       if (name === "wg_get_signals")
         return json(
           tables.wg_signals.filter(
@@ -398,6 +426,57 @@ test("Supabase temporary-admin password must be changed and all old sessions are
   const down = await f.login();
   assert.equal(down.status, 503);
   assert.equal(down.body.code, "SUPABASE_UNAVAILABLE");
+});
+
+test("Supabase SDK history delegates validated paging and UTC dates to a private RPC and sanitizes records", async (t) => {
+  const f = await fixture(t),
+    member = await f.login("member@example.test");
+  const stamp = new Date(Date.now() - 120 * 86400000).toISOString();
+  f.tables.wg_signals.push({
+    id: 1,
+    symbol: "OANDA:XAUUSD",
+    direction: "buy",
+    status: "target",
+    entry: 100,
+    stop: 99,
+    target: 101.5,
+    reference_price: 100,
+    created_at: stamp,
+    quote_at: stamp,
+    expires_at: stamp,
+    opened_at: stamp,
+    closed_at: stamp,
+    author_id: ADMIN,
+    request_id: "private-request",
+  });
+  f.tables.wg_allocations.push({ user_id: MEMBER, signal_id: 1 });
+  assert.equal((await f.request("/api/history")).status, 401);
+  const day = stamp.slice(0, 10),
+    r = await f.request(
+      `/api/history?from=${day}&to=${day}&status=target&direction=buy`,
+      { auth: member },
+    );
+  assert.equal(r.status, 200);
+  assert.equal(r.body.signals.length, 1);
+  assert.equal(r.body.signals[0].openedAt, Date.parse(stamp));
+  assert.doesNotMatch(
+    JSON.stringify(r.body),
+    /author_id|private-request|test-server-secret/,
+  );
+  const args = f.calls.find((c) => c.path.endsWith("/wg_history")).data;
+  assert.equal(args.p_user, MEMBER);
+  assert.equal(args.p_page, 1);
+  assert.equal(args.p_from, day + "T00:00:00.000Z");
+  assert.equal(
+    (await f.request("/api/history?from=2026-02-30", { auth: member })).status,
+    400,
+  );
+  assert.equal(
+    (await f.request("/api/history?status=stopped", { auth: member })).body
+      .total,
+    0,
+  );
+  assert.equal(f.tables.wg_profiles.find((p) => p.id === MEMBER).used, 0);
 });
 
 test("Supabase account provisioning uses Auth Admin API and never accepts a submitted admin role", async (t) => {

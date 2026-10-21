@@ -18,6 +18,7 @@ import { createTelegram, signalMessage } from "./lib/telegram.js";
 import { createBackups } from "./lib/backups.js";
 import { createCloudApp } from "./lib/cloud-server.js";
 import { validTheme } from "./lib/themes.js";
+import { historyQuery } from "./lib/history.js";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const SESSION_DURATION = 12 * 60 * 60 * 1000;
@@ -199,6 +200,8 @@ export async function createApp(options = {}) {
     expiresAt: row.expires_at,
     quoteAt: row.quote_at,
     referencePrice: row.reference_price,
+    openedAt: row.opened_at,
+    closedAt: row.closed_at,
   });
 
   const routes = async (req, res, url) => {
@@ -306,19 +309,19 @@ export async function createApp(options = {}) {
       const { user } = requireSession(req);
       requireActive(user);
       db.prepare(
-        "UPDATE signals SET status='expired' WHERE status='pending' AND expires_at<=?",
+        "UPDATE signals SET status='expired',closed_at=expires_at WHERE status='pending' AND expires_at<=?",
       ).run(now());
       const cutoff = now() - 90 * 86400000;
       const rows =
         user.role === "admin"
           ? db
               .prepare(
-                "SELECT * FROM signals WHERE created_at>=? ORDER BY id DESC LIMIT 200",
+                "SELECT * FROM signals WHERE created_at>=? OR status IN ('pending','open') ORDER BY (status IN ('pending','open')) DESC,id DESC LIMIT 200",
               )
               .all(cutoff)
           : db
               .prepare(
-                "SELECT s.* FROM signals s JOIN allocations a ON a.signal_id=s.id WHERE a.user_id=? AND s.created_at>=? ORDER BY s.id DESC LIMIT 200",
+                "SELECT s.* FROM signals s JOIN allocations a ON a.signal_id=s.id WHERE a.user_id=? AND (s.created_at>=? OR s.status IN ('pending','open')) ORDER BY (s.status IN ('pending','open')) DESC,s.id DESC LIMIT 200",
               )
               .all(user.id, cutoff);
       const closed = rows.filter((row) =>
@@ -331,6 +334,59 @@ export async function createApp(options = {}) {
           closed: closed.length,
           wins: closed.filter((row) => row.status === "target").length,
         },
+        serverTime: now(),
+      });
+    }
+    if (method === "GET" && path === "/api/history") {
+      const { user } = requireSession(req);
+      requireActive(user);
+      const query = historyQuery(url.searchParams);
+      db.prepare(
+        "UPDATE signals SET status='expired',closed_at=expires_at WHERE status='pending' AND expires_at<=?",
+      ).run(now());
+      const conditions = [],
+        args = [];
+      if (user.role !== "admin") {
+        conditions.push(
+          "EXISTS(SELECT 1 FROM allocations a WHERE a.signal_id=s.id AND a.user_id=?)",
+        );
+        args.push(user.id);
+      }
+      const scope = conditions.length ? conditions.join(" AND ") : "1=1";
+      const available = db
+        .prepare(`SELECT count(*) AS total FROM signals s WHERE ${scope}`)
+        .get(...args).total;
+      if (query.status !== "all") {
+        conditions.push("s.status=?");
+        args.push(query.status);
+      }
+      if (query.direction !== "all") {
+        conditions.push("s.direction=?");
+        args.push(query.direction);
+      }
+      if (query.from !== null) {
+        conditions.push("s.created_at>=?");
+        args.push(query.from);
+      }
+      if (query.toExclusive !== null) {
+        conditions.push("s.created_at<?");
+        args.push(query.toExclusive);
+      }
+      const where = conditions.length ? conditions.join(" AND ") : "1=1";
+      const total = db
+        .prepare(`SELECT count(*) AS total FROM signals s WHERE ${where}`)
+        .get(...args).total;
+      const rows = db
+        .prepare(
+          `SELECT s.* FROM signals s WHERE ${where} ORDER BY s.created_at DESC,s.id DESC LIMIT ? OFFSET ?`,
+        )
+        .all(...args, query.pageSize, (query.page - 1) * query.pageSize);
+      return send({
+        signals: rows.map(serializeSignal),
+        total,
+        available,
+        page: query.page,
+        pageSize: query.pageSize,
         serverTime: now(),
       });
     }
@@ -547,7 +603,7 @@ export async function createApp(options = {}) {
           .get(data.requestId);
         if (duplicate) return { id: duplicate.id, duplicate: true };
         db.prepare(
-          "UPDATE signals SET status='expired' WHERE status='pending' AND expires_at<=?",
+          "UPDATE signals SET status='expired',closed_at=expires_at WHERE status='pending' AND expires_at<=?",
         ).run(now());
         if (
           db
@@ -616,16 +672,15 @@ export async function createApp(options = {}) {
       };
       transaction(db, () => {
         db.prepare(
-          "UPDATE signals SET status='expired' WHERE status='pending' AND expires_at<=?",
+          "UPDATE signals SET status='expired',closed_at=expires_at WHERE status='pending' AND expires_at<=?",
         ).run(now());
         const signal = db.prepare("SELECT * FROM signals WHERE id=?").get(id);
         if (!signal) throw error(404, "الإشارة غير موجودة.");
         if (!transitions[signal.status]?.includes(data.status))
           throw error(409, "تغيير الحالة غير مسموح.");
-        db.prepare("UPDATE signals SET status=? WHERE id=?").run(
-          data.status,
-          id,
-        );
+        db.prepare(
+          "UPDATE signals SET status=?,opened_at=CASE WHEN ?='open' THEN coalesce(opened_at,?) ELSE opened_at END,closed_at=CASE WHEN ? IN ('target','stopped','expired','cancelled') THEN ? ELSE closed_at END WHERE id=?",
+        ).run(data.status, data.status, now(), data.status, now(), id);
         audit(admin, `signal.${data.status}`, id);
       });
       return send({ ok: true });

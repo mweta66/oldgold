@@ -40,6 +40,7 @@
       >
       <nav aria-label="القائمة الرئيسية">
         <a href="#memberPanel" class="member-only" hidden>الإشارات</a>
+        <a href="#tradeHistory" class="member-only" hidden>سجل الصفقات</a>
         <a href="#accountPanel" class="member-only" hidden>حسابي</a>
         <a href="#adminPanel" id="adminNav" hidden>لوحة المدير</a>
       </nav>
@@ -217,10 +218,27 @@
             >
           </article>
         </div>
-        <article class="panel history-panel">
+        <article class="panel history-panel" id="tradeHistory">
           <div class="panel-head">
-            <h2>سجل إشارات حسابك</h2>
-            <div class="field compact">
+            <div>
+              <p class="eyebrow">TRADE HISTORY</p>
+              <h2>سجل الصفقات والإشارات</h2>
+              <p class="muted small">
+                التاريخ والوقت بتوقيت UTC. أحدث الصفقات أولًا، وكل تاريخ حسابك
+                متاح بالصفحات.
+              </p>
+            </div>
+            <button id="reloadHistory" class="secondary-btn" type="button">
+              تحديث السجل
+            </button>
+          </div>
+          <p class="muted small">
+            ده سجل الإشارات المنشورة ونتائجها المسجّلة، مش سجل تنفيذ مستورد من
+            MT5 أو Bybit. وقت الفتح والإغلاق حسب تسجيل المدير؛ التاريخ القديم
+            غير المتاح يظهر «غير مسجّل».
+          </p>
+          <form id="historyForm" class="history-filters">
+            <div class="field">
               <label for="historyFilter">تصفية الحالة</label
               ><select id="historyFilter">
                 <option value="all">كل الحالات</option>
@@ -232,8 +250,53 @@
                 <option value="cancelled">ملغاة</option>
               </select>
             </div>
+            <div class="field">
+              <label for="historyDirection">الاتجاه</label
+              ><select id="historyDirection">
+                <option value="all">شراء وبيع</option>
+                <option value="buy">شراء</option>
+                <option value="sell">بيع</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="historyFrom">من تاريخ النشر</label
+              ><input type="date" id="historyFrom" dir="ltr" />
+            </div>
+            <div class="field">
+              <label for="historyTo">إلى تاريخ النشر</label
+              ><input type="date" id="historyTo" dir="ltr" />
+            </div>
+            <div class="history-filter-actions">
+              <button id="applyHistory" class="primary-btn" type="submit">
+                عرض النتائج</button
+              ><button id="resetHistory" class="secondary-btn" type="button">
+                مسح الفلاتر
+              </button>
+            </div>
+          </form>
+          <p id="historySummary" class="small muted" role="status"></p>
+          <p id="historyError" class="message error" role="alert" hidden></p>
+          <div id="history" class="empty-state">
+            سجّل الدخول لعرض سجل حسابك.
           </div>
-          <div id="history" class="empty-state">لا توجد إشارات مستلمة.</div>
+          <div class="history-pagination">
+            <button
+              id="historyPrev"
+              class="secondary-btn"
+              type="button"
+              disabled
+            >
+              السابق</button
+            ><span id="historyPage" class="small muted">صفحة 1</span
+            ><button
+              id="historyNext"
+              class="secondary-btn"
+              type="button"
+              disabled
+            >
+              التالي
+            </button>
+          </div>
         </article>
       </section>
 
