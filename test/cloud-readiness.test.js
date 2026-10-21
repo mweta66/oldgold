@@ -78,6 +78,10 @@ function provider(overrides = {}) {
             },
           ],
         });
+      if (u.pathname === "/v9/projects/prj_Test/domains")
+        return reply({
+          domains: [{ name: "wetagold.example", verified: true }],
+        });
     }
     if (u.hostname === "api.telegram.org") {
       assert.equal(options.headers.authorization, undefined);
@@ -91,6 +95,16 @@ function provider(overrides = {}) {
           ok: true,
           result: { url: "https://private-webhook.invalid/?secret=hidden" },
         });
+    }
+    if (u.hostname === "wetagold.example") {
+      assert.equal(options.headers.authorization, undefined);
+      return reply(
+        {
+          code: "SUPABASE_NOT_CONFIGURED",
+          private: "do-not-log-health-response",
+        },
+        503,
+      );
     }
     throw new Error(`Unexpected sensitive URL: ${url}`);
   };
@@ -110,6 +124,11 @@ test("cloud readiness checks all three providers read-only without leaking crede
   assert.equal(report.vercel.discoveryComplete, true);
   assert.equal(report.vercel.matchingProjects.length, 1);
   assert.equal(report.vercel.matchingProjects[0].repositoryMatches, true);
+  assert.deepEqual(report.vercel.matchingProjects[0].publicHealth, {
+    status: 503,
+    healthy: false,
+    code: "SUPABASE_NOT_CONFIGURED",
+  });
   assert.equal(
     report.vercel.matchingProjects[0].productionEnvironment
       .SUPABASE_SERVICE_ROLE_KEY,

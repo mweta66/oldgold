@@ -168,9 +168,77 @@ export async function cloudReadiness(env, fetcher = fetch) {
               String(link.repo).toLowerCase() === repo.toLowerCase())),
         );
         const variables = Array.isArray(project.env) ? project.env : [];
+        let publicHealth = null;
+        if (repositoryMatches) {
+          const domainList = await request(
+            "vercel",
+            `/v9/projects/${p.id}/domains?${params}`,
+            env.VERCEL_TOKEN,
+          );
+          const domains = Array.isArray(domainList.data?.domains)
+            ? domainList.data.domains.filter(
+                (d) =>
+                  d.verified === true &&
+                  !d.gitBranch &&
+                  !d.redirect &&
+                  !d.customEnvironmentId &&
+                  typeof d.name === "string" &&
+                  /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i.test(d.name),
+              )
+            : [];
+          const custom = domains.filter((d) => !d.name.endsWith(".vercel.app"));
+          const selected = custom.length ? custom : domains;
+          if (selected.length === 1) {
+            try {
+              const response = await fetcher(
+                `https://${selected[0].name}/api/health`,
+                {
+                  method: "GET",
+                  redirect: "error",
+                  signal: AbortSignal.timeout(10000),
+                  headers: {},
+                },
+              );
+              publicHealth = { status: response.status, healthy: false };
+              try {
+                const data = await response.json();
+                publicHealth.healthy =
+                  data.ok === true && data.provider === "supabase";
+                const codes = [
+                  "SUPABASE_NOT_CONFIGURED",
+                  "SUPABASE_UNAVAILABLE",
+                  "SUPABASE_SCHEMA_MISSING",
+                  "SUPABASE_CONFIG_INVALID",
+                  "BACKEND_NOT_CONFIGURED",
+                  "BACKEND_UNAVAILABLE",
+                  "BACKEND_CONFIG_INVALID",
+                  "FUNCTION_INVOCATION_FAILED",
+                ];
+                publicHealth.code = codes.includes(data.code)
+                  ? data.code
+                  : null;
+              } catch {
+                publicHealth.code = "NON_JSON_RESPONSE";
+              }
+            } catch {
+              publicHealth = { healthy: false, code: "REQUEST_FAILED" };
+            }
+          }
+        }
         matches.set(p.id, {
           name: safeName(p.name),
           repositoryMatches,
+          publicHealth,
+          productionDeploymentReady:
+            project.targets?.production?.readyState === "READY",
+          platformProtection: [
+            "all",
+            "preview",
+            "all_except_custom_domains",
+            "prod_deployment_urls_and_all_previews",
+          ].includes(project.ssoProtection?.deploymentType)
+            ? project.ssoProtection.deploymentType
+            : null,
           productionEnvironment: Object.fromEntries(
             environmentKeys.map((key) => [
               key,
