@@ -102,6 +102,7 @@ test("Cairo, real logo/watermark and all four administrator-controlled themes wo
       theme,
     );
     assert.equal((await f.request("/api/appearance")).body.theme, theme);
+    await page.locator("#publishButton").hover();
     const a11y = await new AxeBuilder({ page })
       .exclude("iframe")
       .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
