@@ -161,6 +161,37 @@ test("cloud readiness checks all three providers read-only without leaking crede
     assert(!text.includes(secret), `Unexpected private metadata in report`);
 });
 
+test("runtime diagnostics report fixed categories without returning raw logs or token-bearing errors", async () => {
+  const { fetcher } = provider({
+    "/v9/projects/prj_Test": () =>
+      reply({
+        id: "prj_Test",
+        name: "wetagold",
+        link: { type: "github", repoId: "1427298744" },
+        targets: { production: { id: "dpl_Test", readyState: "READY" } },
+      }),
+    "/api/health": () =>
+      new Response("FUNCTION_INVOCATION_FAILED private request ID", {
+        status: 500,
+      }),
+    "/v1/projects/prj_Test/deployments/dpl_Test/runtime-logs": () =>
+      new Response(
+        `ERR_MODULE_NOT_FOUND Cannot find package '@supabase/supabase-js' ${env.VERCEL_TOKEN} unrelated-private-info`,
+      ),
+  });
+  const report = await cloudReadiness(env, fetcher);
+  const p = report.vercel.matchingProjects[0];
+  assert.equal(p.publicHealth.code, "FUNCTION_INVOCATION_FAILED");
+  assert.deepEqual(p.runtimeDiagnostics, {
+    available: true,
+    categories: ["ERR_MODULE_NOT_FOUND", "SUPABASE_PACKAGE_MISSING"],
+  });
+  const text = JSON.stringify(report);
+  assert(!text.includes(env.VERCEL_TOKEN));
+  assert(!text.includes("unrelated-private-info"));
+  assert(!text.includes("private request ID"));
+});
+
 test("absent secrets do not make network requests or claim readiness", async () => {
   const report = await cloudReadiness({}, () => {
     throw new Error("No network allowed");

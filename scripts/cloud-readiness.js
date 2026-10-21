@@ -8,6 +8,7 @@ const environmentKeys = [
   "SUPABASE_SERVICE_ROLE_KEY",
   "PUBLIC_ORIGIN",
   "COOKIE_SECURE",
+  "STORAGE_PROVIDER",
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_WEBHOOK_SECRET",
   "TELEGRAM_GROUP_CHAT_ID",
@@ -201,22 +202,39 @@ export async function cloudReadiness(env, fetcher = fetch) {
               );
               publicHealth = { status: response.status, healthy: false };
               try {
-                const data = await response.json();
-                publicHealth.healthy =
-                  data.ok === true && data.provider === "supabase";
-                const codes = [
-                  "SUPABASE_NOT_CONFIGURED",
-                  "SUPABASE_UNAVAILABLE",
-                  "SUPABASE_SCHEMA_MISSING",
-                  "SUPABASE_CONFIG_INVALID",
-                  "BACKEND_NOT_CONFIGURED",
-                  "BACKEND_UNAVAILABLE",
-                  "BACKEND_CONFIG_INVALID",
-                  "FUNCTION_INVOCATION_FAILED",
-                ];
-                publicHealth.code = codes.includes(data.code)
-                  ? data.code
-                  : null;
+                const text = await response.text();
+                let data;
+                try {
+                  data = JSON.parse(text);
+                } catch {
+                  const platformCodes = [
+                    "FUNCTION_INVOCATION_FAILED",
+                    "FUNCTION_INVOCATION_TIMEOUT",
+                    "DEPLOYMENT_NOT_FOUND",
+                    "DEPLOYMENT_DISABLED",
+                    "AUTHENTICATION_REQUIRED",
+                  ];
+                  publicHealth.code =
+                    platformCodes.find((code) => text.includes(code)) ||
+                    "NON_JSON_RESPONSE";
+                }
+                if (data) {
+                  publicHealth.healthy =
+                    data.ok === true && data.provider === "supabase";
+                  const codes = [
+                    "SUPABASE_NOT_CONFIGURED",
+                    "SUPABASE_UNAVAILABLE",
+                    "SUPABASE_SCHEMA_MISSING",
+                    "SUPABASE_CONFIG_INVALID",
+                    "BACKEND_NOT_CONFIGURED",
+                    "BACKEND_UNAVAILABLE",
+                    "BACKEND_CONFIG_INVALID",
+                    "FUNCTION_INVOCATION_FAILED",
+                  ];
+                  publicHealth.code = codes.includes(data.code)
+                    ? data.code
+                    : null;
+                }
               } catch {
                 publicHealth.code = "NON_JSON_RESPONSE";
               }
@@ -225,10 +243,67 @@ export async function cloudReadiness(env, fetcher = fetch) {
             }
           }
         }
+        let runtimeDiagnostics = null;
+        const deploymentId = project.targets?.production?.id;
+        if (
+          publicHealth?.status >= 500 &&
+          /^dpl_[A-Za-z0-9]+$/.test(deploymentId || "")
+        ) {
+          let text = "";
+          let reader;
+          try {
+            const response = await fetcher(
+              `https://api.vercel.com/v1/projects/${p.id}/deployments/${deploymentId}/runtime-logs?${params}`,
+              {
+                method: "GET",
+                redirect: "error",
+                signal: AbortSignal.timeout(10000),
+                headers: { authorization: `Bearer ${env.VERCEL_TOKEN}` },
+              },
+            );
+            runtimeDiagnostics = { available: response.ok, categories: [] };
+            if (!response.ok)
+              runtimeDiagnostics.error = `HTTP_${response.status}`;
+            else {
+              reader = response.body.getReader();
+              const decoder = new TextDecoder();
+              for (let n = 0; n < 16 && text.length < 131072; n++) {
+                const chunk = await reader.read();
+                if (chunk.done) break;
+                text += decoder.decode(chunk.value, { stream: true });
+              }
+            }
+          } catch {
+            runtimeDiagnostics ||= {
+              available: false,
+              categories: [],
+              error: "REQUEST_FAILED",
+            };
+          } finally {
+            if (reader) await reader.cancel().catch(() => {});
+          }
+          const patterns = {
+            ERR_MODULE_NOT_FOUND: /ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/,
+            SUPABASE_PACKAGE_MISSING:
+              /Cannot find (?:module|package) ['"]@supabase\/supabase-js['"]/,
+            APPLICATION_MODULE_MISSING:
+              /Cannot find (?:module|package) [^\n]*\/lib\/supabase\.js/,
+            ERR_REQUIRE_ESM: /ERR_REQUIRE_ESM/,
+            ESM_CONFIG_ERROR:
+              /Cannot use import statement outside a module|Unexpected token ['"]export['"]/,
+            ERR_UNKNOWN_FILE_EXTENSION: /ERR_UNKNOWN_FILE_EXTENSION/,
+            ERR_PACKAGE_PATH_NOT_EXPORTED: /ERR_PACKAGE_PATH_NOT_EXPORTED/,
+            UNDEFINED_RUNTIME_STATE: /Cannot read properties of undefined/,
+          };
+          runtimeDiagnostics.categories = Object.entries(patterns)
+            .filter(([, pattern]) => pattern.test(text))
+            .map(([code]) => code);
+        }
         matches.set(p.id, {
           name: safeName(p.name),
           repositoryMatches,
           publicHealth,
+          runtimeDiagnostics,
           productionDeploymentReady:
             project.targets?.production?.readyState === "READY",
           platformProtection: [
