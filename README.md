@@ -8,6 +8,8 @@
 
 التفاصيل: [دليل Supabase](docs/SUPABASE.md).
 
+إذا حُفظت مفاتيح الإدارة في GitHub Actions بدل إعدادات البيئة، راجع [فحص اتصالات النشر الآمن](docs/CLOUD-ACTIVATION.md). الفحص لا ينشئ موارد ولا يعلن أن الموقع جاهز للإنتاج.
+
 1. أنشئ مشروع Supabase وشغّل migrations [001](supabase/migrations/001_wetagold.sql) ثم [002](supabase/migrations/002_trade_history.sql) ثم [003 لتنبيهات Telegram](supabase/migrations/003_telegram_events.sql) بالترتيب. طبّق الملفات غير المطبقة فقط دون مسح البيانات؛ راجع دليل التشغيل قبل ترقية بوت حي.
 2. أضف `SUPABASE_URL` و`SUPABASE_ANON_KEY` و`SUPABASE_SERVICE_ROLE_KEY` في بيئة **الخادم** في Vercel، و`PUBLIC_ORIGIN` لدومين الموقع النهائي و`COOKIE_SECURE=true`. لا تنشر مفاتيح في المتصفح أو Git أو المحادثة.
 3. أنشئ أول مدير من بيئة موثوقة بأداة التهيئة أدناه، ثم أعد نشر الموقع. الحساب المحلي السابق لا ينتقل تلقائيًا إلى Supabase. لا تحتاج `BACKEND_ORIGIN`.
