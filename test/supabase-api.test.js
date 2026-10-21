@@ -340,6 +340,72 @@ test("Supabase missing or invalid configuration fails closed; public branding re
   }
 });
 
+test("Vercel deployment-origin login succeeds despite a different canonical origin; CSRF and foreign-origin checks remain enforced", async (t) => {
+  const production = "https://wetagold.vercel.app",
+    preview = "https://wetagold-test123-team.vercel.app";
+  const f = await fixture(t, {
+    VERCEL: "1",
+    PUBLIC_ORIGIN: production,
+    VERCEL_URL: new URL(preview).hostname,
+  });
+  const result = await f.request("/api/login", {
+    method: "POST",
+    headers: { origin: preview },
+    data: { email: "admin@example.test", password: PASSWORD },
+  });
+  assert.equal(result.status, 200);
+  const auth = {
+    cookie: result.headers.get("set-cookie").split(";")[0],
+    csrf: result.body.csrf,
+  };
+  assert.equal(
+    (
+      await f.request("/api/admin/settings", {
+        method: "PATCH",
+        auth,
+        headers: { origin: preview },
+        data: { theme: "ocean" },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await f.request("/api/admin/settings", {
+        method: "PATCH",
+        auth: { ...auth, csrf: "wrong" },
+        headers: { origin: preview },
+        data: { theme: "gold" },
+      })
+    ).status,
+    403,
+  );
+  for (const origin of [
+    "https://attacker.test",
+    "https://unrelated.vercel.app",
+    f.origin,
+  ]) {
+    const blocked = await f.request("/api/login", {
+      method: "POST",
+      headers: { origin, "x-forwarded-host": new URL(origin).hostname },
+      data: { email: "admin@example.test", password: PASSWORD },
+    });
+    assert.equal(blocked.status, 403);
+    assert.equal(blocked.body.code, "ORIGIN_NOT_ALLOWED");
+  }
+  assert.equal((await f.request("/api/me", { auth })).body.user.role, "admin");
+  assert.equal(
+    (
+      await f.request("/api/login", {
+        method: "POST",
+        headers: { origin: production },
+        data: { email: "admin@example.test", password: PASSWORD },
+      })
+    ).status,
+    200,
+  );
+});
+
 test("Supabase research route checks roles before public-market access and does not mutate signals", async (t) => {
   let calls = 0;
   const f = await fixture(
