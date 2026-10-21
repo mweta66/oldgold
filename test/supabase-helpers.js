@@ -206,6 +206,7 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
           },
         );
       if (name === "wg_publish") return json({ id: 1, recipients: 1 });
+      if (name === "wg_target_hit") return json({ ok: true, duplicate: false });
       if (name === "wg_history") {
         const available = tables.wg_signals.filter(
           (s) =>

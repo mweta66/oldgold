@@ -26,14 +26,16 @@ const assert = (condition, code) => {
 };
 
 export function migrationBatch(files) {
-  assert(files.length === 3, "MIGRATION_COUNT_INVALID");
+  assert(files.length === 4, "MIGRATION_COUNT_INVALID");
   assert(
-    files.every((file, index) => file.version === ["001", "002", "003"][index]),
+    files.every(
+      (file, index) => file.version === ["001", "002", "003", "004"][index],
+    ),
     "MIGRATION_ORDER_INVALID",
   );
   const records = [];
   const statements = files.map(({ version, sql }) => {
-    assert(/^00[123]$/.test(version), "MIGRATION_VERSION_INVALID");
+    assert(/^00[1234]$/.test(version), "MIGRATION_VERSION_INVALID");
     assert(
       (sql.match(/^begin;[ \t]*$/gm) || []).length === 1 &&
         (sql.match(/^commit;[ \t]*$/gm) || []).length === 1,
@@ -96,6 +98,7 @@ export async function activateCloud(
         ["001", "001_wetagold.sql"],
         ["002", "002_trade_history.sql"],
         ["003", "003_telegram_events.sql"],
+        ["004", "004_multiple_targets.sql"],
       ].map(([version, file]) => ({
         version,
         sql: readFileSync(
@@ -353,12 +356,15 @@ export async function activateCloud(
       (select count(*) from pg_tables where schemaname='public' and tablename in (${requiredTables.map(sqlString).join(",")}) and
         (has_table_privilege('anon','public.'||tablename,'SELECT,INSERT,UPDATE,DELETE') or has_table_privilege('authenticated','public.'||tablename,'SELECT,INSERT,UPDATE,DELETE'))) as browser_readable,
       to_regprocedure('public.wg_signal_status(uuid,bigint,text,text)') is not null as events_ready,
-      to_regprocedure('public.wg_history(uuid,integer,text,text,timestamptz,timestamptz)') is not null as history_ready`);
+      to_regprocedure('public.wg_history(uuid,integer,text,text,timestamptz,timestamptz)') is not null as history_ready,
+      (to_regprocedure('public.wg_target_hit(uuid,bigint,integer,text)') is not null and
+       (select count(*) from information_schema.columns where table_schema='public' and table_name='wg_signals' and column_name in ('targets','targets_hit'))=2) as targets_ready`);
     assert(
       Number(schema[0]?.private_tables) === requiredTables.length &&
         Number(schema[0]?.browser_readable) === 0 &&
         schema[0]?.events_ready &&
-        schema[0]?.history_ready,
+        schema[0]?.history_ready &&
+        schema[0]?.targets_ready,
       "SCHEMA_SECURITY_CHECK_FAILED",
     );
     report.schemaReady = true;

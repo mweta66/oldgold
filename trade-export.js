@@ -24,12 +24,16 @@ export function historyCsv(signals, timeZone) {
       "Status",
       "Entry",
       "SL",
-      "TP",
+      "TP (final)",
       "Published UTC",
       "Opened UTC (recorded, not broker execution)",
       "Closed UTC",
       "Display timezone",
       "Published local",
+      "TP1",
+      "TP2",
+      "TP3",
+      "Targets recorded as reached (not executions)",
     ],
   ];
   for (const signal of signals)
@@ -46,6 +50,8 @@ export function historyCsv(signals, timeZone) {
       stamp(signal.closedAt),
       timeZone,
       local(signal.createdAt),
+      ...(signal.targets || [signal.target]).concat(["", "", ""]).slice(0, 3),
+      signal.targetsHit ?? (signal.status === "target" ? 1 : 0),
     ]);
   return "\ufeff" + rows.map((row) => row.map(cell).join(",")).join("\r\n");
 }

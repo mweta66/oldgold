@@ -65,6 +65,15 @@ test("Supabase migration and RPCs execute on PostgreSQL, not an in-memory applic
   assert.equal(migrated[0].state, "failed");
   assert.equal(migrated[0].attempts, 2);
   assert.equal(migrated[0].kind, "publish");
+  await db.exec(
+    await readFile(
+      new URL(
+        "../supabase/migrations/004_multiple_targets.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   const rpc = async (name, args, casts) =>
     (
       await db.query(

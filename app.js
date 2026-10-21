@@ -585,6 +585,8 @@ function loadChart() {
 }
 
 function signalCard(signal) {
+  const targets = signal.targets || [signal.target];
+  const hit = signal.targetsHit || 0;
   const wrap = element("div");
   wrap.className = "signal-item";
   const head = element("div", undefined, "signal-heading");
@@ -600,7 +602,7 @@ function signalCard(signal) {
   for (const [label, value, color] of [
     ["الدخول", signal.entry, ""],
     ["وقف الخسارة", signal.stop, "negative"],
-    ["الهدف", signal.target, "positive"],
+    [targets.length > 1 ? "الهدف النهائي" : "الهدف", signal.target, "positive"],
   ]) {
     const level = element("div");
     level.append(
@@ -620,7 +622,10 @@ function signalCard(signal) {
   );
   meta.append(
     element("span", `رقم الإشارة: #${signal.id} · ${signal.symbol}`),
-    element("span", `العائد للمخاطرة: 1 : ${risk.toFixed(2)}`),
+    element(
+      "span",
+      `${targets.length > 1 ? "العائد للمخاطرة حتى الهدف النهائي" : "العائد للمخاطرة"}: 1 : ${risk.toFixed(2)}`,
+    ),
     element("span", `صدرت: ${date(signal.createdAt)}`),
     opened,
     element("span", `أُغلقت / انتهت: ${date(signal.closedAt)}`),
@@ -628,6 +633,26 @@ function signalCard(signal) {
     element("span", `السعر المرجعي عند النشر: ${price(signal.referencePrice)}`),
   );
   wrap.append(head, levels, meta);
+  if (targets.length > 1) {
+    const milestones = element("div", undefined, "target-progress");
+    targets.forEach((target, index) =>
+      milestones.append(
+        element(
+          "p",
+          `TP${index + 1}: ${price(target)} · ${index < hit ? "مسجّل كمتحقق" : "لم يُسجّل تحققه"}`,
+          index < hit ? "positive small" : "small muted",
+        ),
+      ),
+    );
+    milestones.append(
+      element(
+        "p",
+        "تحقق هدف لا يعني ربحًا فعليًا أو تنفيذ إغلاق جزئي. الأهداف التالية تظل معلّقة حتى تسجيلها.",
+        "small muted",
+      ),
+    );
+    wrap.append(milestones);
+  }
   if (user?.role === "admin" && transitions[signal.status]) {
     const key = `${signal.id}:${signal.status}`;
     if (!signalActions.has(key))
@@ -640,7 +665,11 @@ function signalCard(signal) {
     form.dataset.actionKey = key;
     const select = element("select");
     select.setAttribute("aria-label", `تغيير حالة الإشارة ${signal.id}`);
-    for (const status of transitions[signal.status]) {
+    const options = transitions[signal.status].filter(
+      (status) => status !== "target" || targets.length === 1,
+    );
+    if (!options.includes(action.selected)) action.selected = options[0];
+    for (const status of options) {
       const option = element("option", statuses[status]);
       option.value = status;
       select.append(option);
@@ -654,6 +683,44 @@ function signalCard(signal) {
     button.disabled = action.busy;
     button.type = "submit";
     form.append(select, button);
+    const targetButton = element(
+      "button",
+      `تسجيل TP${hit + 1}`,
+      "secondary-btn",
+    );
+    targetButton.type = "button";
+    targetButton.disabled = action.busy;
+    targetButton.dataset.targetIndex = String(hit + 1);
+    if (signal.status === "open" && targets.length > 1 && hit < targets.length)
+      form.append(targetButton);
+    targetButton.addEventListener("click", async () => {
+      if (action.busy) return;
+      const version = generation;
+      action.busy = true;
+      for (const control of form.elements) control.disabled = true;
+      try {
+        const result = await api(`/api/admin/signals/${signal.id}/target`, {
+          method: "PATCH",
+          data: { targetIndex: hit + 1 },
+        });
+        if (version !== generation) return;
+        notify(
+          result.duplicate
+            ? "الهدف مسجّل بالفعل؛ لم تتكرر الرسالة."
+            : `تم تسجيل TP${hit + 1} وجدولة تحديثه.`,
+        );
+        await refresh();
+      } catch (err) {
+        if (version === generation) message("#adminMessage", err.message);
+      } finally {
+        if (version === generation) {
+          action.busy = false;
+          for (const node of $$("[data-action-key]"))
+            if (node.dataset.actionKey === key)
+              for (const control of node.elements) control.disabled = false;
+        }
+      }
+    });
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const version = generation;
@@ -661,6 +728,7 @@ function signalCard(signal) {
       action.busy = true;
       button.disabled = true;
       select.disabled = true;
+      targetButton.disabled = true;
       try {
         await api(`/api/admin/signals/${signal.id}`, {
           method: "PATCH",
@@ -820,7 +888,19 @@ function renderHistory() {
       ],
       ["الدخول", element("span", price(signal.entry), "number")],
       ["الوقف", element("span", price(signal.stop), "number negative")],
-      ["الهدف", element("span", price(signal.target), "number positive")],
+      [
+        "الأهداف",
+        element(
+          "span",
+          (signal.targets || [signal.target])
+            .map(
+              (target, index) =>
+                `TP${index + 1}: ${price(target)}${index < (signal.targetsHit || 0) ? " ✓" : ""}`,
+            )
+            .join(" · "),
+          "number positive",
+        ),
+      ],
       [
         "الفتح",
         stamp(
@@ -1045,6 +1125,9 @@ function renderAdmin() {
     "signal.stopped": "تسجيل الوقف",
     "signal.expired": "انتهاء إشارة",
     "signal.cancelled": "إلغاء إشارة",
+    "signal.tp1": "تسجيل TP1",
+    "signal.tp2": "تسجيل TP2",
+    "signal.tp3": "تسجيل TP3",
     "telegram.retry": "إعادة محاولة رسائل Telegram",
   };
   $("#auditLog").replaceChildren(
@@ -1459,11 +1542,21 @@ $("#signalForm").addEventListener("submit", async (event) => {
   $("#publishButton").disabled = true;
   lockForm("#signalForm");
   try {
+    if ($("#target3").value && !$("#target2").value)
+      throw new Error("أدخل TP2 قبل TP3.");
+    const targets = [
+      $("#target").value,
+      $("#target2").value,
+      $("#target3").value,
+    ]
+      .filter((value) => value !== "")
+      .map(Number);
     const data = {
       direction: $("#direction").value,
       entry: Number($("#entry").value),
       stop: Number($("#stop").value),
-      target: Number($("#target").value),
+      target: targets.at(-1),
+      targets,
       referencePrice: Number($("#referencePrice").value),
       quoteAt: isoDate($("#quoteAt").value),
     };

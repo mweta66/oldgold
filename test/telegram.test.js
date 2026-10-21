@@ -73,6 +73,79 @@ function linkOwner(f) {
     .run();
 }
 
+test("three targets each deliver their own ordered snapshot to the verified group and allocated member without duplicate quota or notifications", async (t) => {
+  const sent = [];
+  const f = await fixture({
+    env: {
+      TELEGRAM_BOT_TOKEN: "test-only-token",
+      TELEGRAM_GROUP_CHAT_ID: "-1001",
+    },
+    fetchImpl: async (url, opts) => {
+      const method = url.split("/").pop(),
+        body = JSON.parse(opts.body);
+      const known = privacyResult(method, body);
+      if (known) return Response.json({ ok: true, result: known });
+      sent.push(body);
+      return Response.json({ ok: true, result: { message_id: sent.length } });
+    },
+  });
+  t.after(() => f.app.close());
+  linkOwner(f);
+  const admin = await f.login(),
+    input = f.account("multi-telegram@example.test", 1);
+  await f.request("/api/admin/users", {
+    method: "POST",
+    auth: admin,
+    data: input,
+  });
+  f.app.db
+    .prepare("UPDATE users SET telegram_chat_id='123' WHERE email=?")
+    .run(input.email);
+  const signal = await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: { ...f.signal(), target: 103, targets: [101, 102, 103] },
+  });
+  await f.app.telegram.flush();
+  await f.request(`/api/admin/signals/${signal.body.id}`, {
+    method: "PATCH",
+    auth: admin,
+    data: { status: "open" },
+  });
+  await f.app.telegram.flush();
+  for (let n = 1; n <= 3; n++) {
+    f.advance(1000);
+    const update = () =>
+      f.request(`/api/admin/signals/${signal.body.id}/target`, {
+        method: "PATCH",
+        auth: admin,
+        data: { targetIndex: n },
+      });
+    assert.equal((await update()).status, 200);
+    await f.app.telegram.flush();
+    const count = sent.length;
+    assert.equal((await update()).body.duplicate, true);
+    await f.app.telegram.flush();
+    assert.equal(sent.length, count);
+  }
+  for (const chat of ["-1001", "123"]) {
+    const texts = sent
+      .filter((row) => row.chat_id === chat)
+      .map((row) => row.text);
+    assert.equal(texts.length, 5);
+    for (let n = 1; n <= 3; n++)
+      assert.match(texts[n + 1], new RegExp(`تسجيل تحقق TP${n}`));
+    assert.doesNotMatch(texts[2], /TP2: 102 — مسجّل/);
+    assert.match(texts[4], /اكتملت الأهداف/);
+    assert.match(texts[4], /ليست تأكيد تنفيذ/);
+  }
+  assert.equal(
+    f.app.db.prepare("SELECT used FROM users WHERE email=?").get(input.email)
+      .used,
+    1,
+  );
+});
+
 test("bot linking uses a one-time private-chat token and publishing queues real recipients plus the admin group", async (t) => {
   let updates = [],
     sent = [];

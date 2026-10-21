@@ -3,6 +3,81 @@ import assert from "node:assert/strict";
 import { digest } from "../lib/crypto.js";
 import { fixture, ADMIN, MEMBER, PASSWORD } from "./supabase-helpers.js";
 
+test("Supabase target updates require admin and validated ordinal; public signal/history serializes numeric targets only to allocated members", async (t) => {
+  const f = await fixture(t, { TELEGRAM_GROUP_CHAT_ID: "-1001" });
+  const admin = await f.login(),
+    member = await f.login("member@example.test");
+  const route = "/api/admin/signals/1/target";
+  assert.equal(
+    (
+      await f.request(route, {
+        method: "PATCH",
+        auth: member,
+        data: { targetIndex: 1 },
+      })
+    ).status,
+    403,
+  );
+  for (const targetIndex of [0, 4, 1.5, "1", null])
+    assert.equal(
+      (
+        await f.request(route, {
+          method: "PATCH",
+          auth: admin,
+          data: { targetIndex },
+        })
+      ).status,
+      400,
+    );
+  assert.equal(
+    (
+      await f.request(route, {
+        method: "PATCH",
+        auth: admin,
+        data: { targetIndex: 2 },
+      })
+    ).body.ok,
+    true,
+  );
+  const args = f.calls.find((c) => c.path.endsWith("/wg_target_hit")).data;
+  assert.deepEqual(args, {
+    p_actor: ADMIN,
+    p_id: 1,
+    p_index: 2,
+    p_group_chat: "-1001",
+  });
+  const stamp = new Date().toISOString();
+  f.tables.wg_signals.push({
+    id: 1,
+    symbol: "OANDA:XAUUSD",
+    direction: "buy",
+    entry: 100,
+    stop: 99,
+    target: 103,
+    targets: ["101", "102", "103"],
+    targets_hit: 1,
+    status: "open",
+    created_at: stamp,
+    quote_at: stamp,
+    reference_price: 100,
+    expires_at: new Date(Date.now() + 900000).toISOString(),
+    opened_at: stamp,
+    closed_at: null,
+    request_id: "private-request",
+    author_id: ADMIN,
+  });
+  assert.equal(
+    (await f.request("/api/signals", { auth: member })).body.signals.length,
+    0,
+  );
+  f.tables.wg_allocations.push({ user_id: MEMBER, signal_id: 1 });
+  const publicRow = (await f.request("/api/signals", { auth: member })).body
+    .signals[0];
+  assert.deepEqual(publicRow.targets, [101, 102, 103]);
+  assert.equal(publicRow.targetsHit, 1);
+  assert.doesNotMatch(JSON.stringify(publicRow), /private-request|author_id/);
+});
+
 test("health checks all required schema tables, diagnostics stay private and distinguish configuration from verification", async (t) => {
   const f = await fixture(t, { VERCEL_GIT_COMMIT_SHA: "a".repeat(40) });
   const admin = await f.login();

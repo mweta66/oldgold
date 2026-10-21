@@ -25,6 +25,11 @@ import { historyQuery } from "./lib/history.js";
 import { operationsReport, releaseId } from "./lib/operations.js";
 import { memberQuery } from "./lib/member-query.js";
 import {
+  validateTargets,
+  storedTargets,
+  storedTargetsHit,
+} from "./lib/targets.js";
+import {
   timeZoneCountries,
   validPreferences,
   displayPreferences,
@@ -213,6 +218,8 @@ export async function createApp(options = {}) {
     entry: row.entry,
     stop: row.stop,
     target: row.target,
+    targets: storedTargets(row),
+    targetsHit: storedTargetsHit(row),
     status: row.status,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
@@ -650,6 +657,7 @@ export async function createApp(options = {}) {
       const data = await bodyOf(req),
         quoteAt = timestamp(data.quoteAt);
       const prices = [data.entry, data.stop, data.target, data.referencePrice];
+      const targets = validateTargets(data);
       if (
         !prices.every(
           (n) =>
@@ -707,7 +715,7 @@ export async function createApp(options = {}) {
           );
         const result = db
           .prepare(
-            "INSERT INTO signals(request_id,symbol,direction,entry,stop,target,created_at,expires_at,quote_at,reference_price,author_id) VALUES(?,'OANDA:XAUUSD',?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO signals(request_id,symbol,direction,entry,stop,target,created_at,expires_at,quote_at,reference_price,author_id,targets) VALUES(?,'OANDA:XAUUSD',?,?,?,?,?,?,?,?,?,?)",
           )
           .run(
             data.requestId,
@@ -720,6 +728,7 @@ export async function createApp(options = {}) {
             quoteAt,
             data.referencePrice,
             admin.id,
+            JSON.stringify(targets),
           );
         const id = Number(result.lastInsertRowid);
         db.prepare(
@@ -751,6 +760,48 @@ export async function createApp(options = {}) {
       return send(result, result.duplicate ? 200 : 201);
     }
     const signalRoute = /^\/api\/admin\/signals\/(\d+)$/.exec(path);
+    const targetRoute = /^\/api\/admin\/signals\/(\d+)\/target$/.exec(path);
+    if (method === "PATCH" && targetRoute) {
+      const data = await bodyOf(req),
+        id = Number(targetRoute[1]);
+      if (
+        !Number.isSafeInteger(data.targetIndex) ||
+        data.targetIndex < 1 ||
+        data.targetIndex > 3
+      )
+        throw error(400, "رقم الهدف غير صحيح.");
+      const result = transaction(db, () => {
+        const signal = db.prepare("SELECT * FROM signals WHERE id=?").get(id);
+        if (!signal) throw error(404, "الإشارة غير موجودة.");
+        const targets = storedTargets(signal),
+          hit = storedTargetsHit(signal);
+        if (data.targetIndex > targets.length)
+          throw error(400, "الهدف غير موجود.");
+        if (data.targetIndex <= hit) return { ok: true, duplicate: true };
+        if (signal.status !== "open" || data.targetIndex !== hit + 1)
+          throw error(409, "افتح الإشارة وسجّل الأهداف بالترتيب دون تخطّي.");
+        const final = data.targetIndex === targets.length;
+        db.prepare(
+          "UPDATE signals SET targets_hit=?,status=?,closed_at=?,telegram_group_chat_id=? WHERE id=?",
+        ).run(
+          data.targetIndex,
+          final ? "target" : "open",
+          final ? now() : null,
+          telegram.configured ? groupChatId(env) : null,
+          id,
+        );
+        recordSignalEvent(
+          db,
+          db.prepare("SELECT * FROM signals WHERE id=?").get(id),
+          targets.length > 1 ? `tp${data.targetIndex}` : "status",
+          now(),
+        );
+        audit(admin, `signal.tp${data.targetIndex}`, id);
+        return { ok: true, duplicate: false };
+      });
+      void telegram.flush();
+      return send(result);
+    }
     if (method === "PATCH" && signalRoute) {
       const data = await bodyOf(req),
         id = Number(signalRoute[1]);
@@ -764,9 +815,13 @@ export async function createApp(options = {}) {
         if (!signal) throw error(404, "الإشارة غير موجودة.");
         if (!transitions[signal.status]?.includes(data.status))
           throw error(409, "تغيير الحالة غير مسموح.");
+        if (data.status === "target" && storedTargets(signal).length > 1)
+          throw error(409, "سجّل الأهداف المتعددة بالترتيب من أزرار TP.");
         db.prepare(
           "UPDATE signals SET status=?,opened_at=CASE WHEN ?='open' THEN coalesce(opened_at,?) ELSE opened_at END,closed_at=CASE WHEN ? IN ('target','stopped','expired','cancelled') THEN ? ELSE closed_at END WHERE id=?",
         ).run(data.status, data.status, now(), data.status, now(), id);
+        if (data.status === "target")
+          db.prepare("UPDATE signals SET targets_hit=1 WHERE id=?").run(id);
         db.prepare(
           "UPDATE signals SET telegram_group_chat_id=? WHERE id=?",
         ).run(telegram.configured ? groupChatId(env) : null, id);

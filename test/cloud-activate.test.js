@@ -31,15 +31,18 @@ const tables = [
   "wg_signal_events",
 ];
 const files = () =>
-  ["001_wetagold.sql", "002_trade_history.sql", "003_telegram_events.sql"].map(
-    (name) => ({
-      version: name.slice(0, 3),
-      sql: readFileSync(
-        new URL(`../supabase/migrations/${name}`, import.meta.url),
-        "utf8",
-      ),
-    }),
-  );
+  [
+    "001_wetagold.sql",
+    "002_trade_history.sql",
+    "003_telegram_events.sql",
+    "004_multiple_targets.sql",
+  ].map((name) => ({
+    version: name.slice(0, 3),
+    sql: readFileSync(
+      new URL(`../supabase/migrations/${name}`, import.meta.url),
+      "utf8",
+    ),
+  }));
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
     status,
@@ -89,6 +92,7 @@ function fixture(options = {}) {
               browser_readable: options.unsafe ? 1 : 0,
               events_ready: true,
               history_ready: true,
+              targets_ready: !options.missingTargets,
             },
           ]);
         if (sql.startsWith("select (select decrypted_secret")) {
@@ -331,6 +335,27 @@ test("unsafe existing RLS configuration is not overwritten or silently accepted"
     r = await f.run();
   assert.equal(r.error, "SCHEMA_SECURITY_CHECK_FAILED");
   assert(!f.calls.some((c) => c.url.pathname.endsWith("/env")));
+});
+
+test("an existing schema without target migration is rejected before deployment, credentials or cron changes", async () => {
+  const f = fixture({ missingTargets: true }),
+    result = await f.run();
+  assert.equal(result.error, "SCHEMA_SECURITY_CHECK_FAILED");
+  assert.equal(result.schemaReady, false);
+  assert(
+    !f.calls.some(
+      (c) =>
+        c.url.pathname.endsWith("/env") ||
+        c.url.pathname.endsWith("/deployments"),
+    ),
+  );
+  assert(
+    !f.calls.some(
+      (c) =>
+        c.url.pathname.endsWith("/database/query") &&
+        c.body.read_only === false,
+    ),
+  );
 });
 
 test("administrator bootstrap uses secure configured credentials, forces password replacement and cleans up only its own failed new account", async () => {

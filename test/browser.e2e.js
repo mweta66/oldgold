@@ -1605,3 +1605,87 @@ test("administrator can page and search member accounts without losing an unsave
       .textContent.includes("لا توجد حسابات مطابقة"),
   );
 });
+
+test("multiple targets publish from the admin form, advance sequentially and stay chart-free for members", async (t) => {
+  const { f, page } = await brandedPage(t);
+  const admin = await f.login(),
+    input = f.account("multi-ui@example.test", 1);
+  await f.request("/api/admin/users", {
+    method: "POST",
+    auth: admin,
+    data: input,
+  });
+  await page.goto(f.origin);
+  const login = async (email, password) => {
+    await page.locator("#loginButton").click();
+    await page.locator("#loginEmail").fill(email);
+    await page.locator("#loginPassword").fill(password);
+    await page.locator("#submitLogin").click();
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#lastUpdate")
+        .textContent.startsWith("آخر مزامنة:"),
+    );
+  };
+  await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  await page.locator("#entry").fill("100");
+  await page.locator("#stop").fill("99");
+  await page.locator("#target").fill("101");
+  await page.locator("#target2").fill("102");
+  await page.locator("#target3").fill("103");
+  await page.locator("#referencePrice").fill("100");
+  await page.locator("#quoteAt").fill(localInput(f.now(), EGYPT_ZONE));
+  await page.locator("#publishButton").click();
+  await page.waitForFunction(
+    () => document.querySelectorAll("#currentSignal .signal-item").length === 1,
+  );
+  assert.match(
+    await page.locator("#currentSignal").textContent(),
+    /TP1: 101.00/,
+  );
+  const actions = page.locator('[data-action-key="1:pending"]');
+  await actions.locator("select").selectOption("open");
+  await actions.locator("button[type=submit]").click();
+  await page.waitForSelector('[data-target-index="1"]');
+  assert.equal(
+    await page
+      .locator('[data-action-key="1:open"] option[value=target]')
+      .count(),
+    0,
+  );
+  for (let n = 1; n <= 3; n++) {
+    await page.locator(`[data-target-index="${n}"]`).click();
+    if (n < 3) await page.waitForSelector(`[data-target-index="${n + 1}"]`);
+    else
+      await page.waitForFunction(
+        () =>
+          document.querySelectorAll("#currentSignal [data-action-key]")
+            .length === 0,
+      );
+  }
+  assert.match(
+    await page.locator("#currentSignal").textContent(),
+    /TP3: 103.00 · مسجّل كمتحقق/,
+  );
+  assert.match(await page.locator("#history").textContent(), /TP1: 101.00 ✓/);
+  await page.locator("#logoutButton").click();
+  await page.waitForSelector("#landing", { state: "visible" });
+  await login(input.email, input.password);
+  assert.equal(await page.locator("iframe").count(), 0);
+  assert.equal(
+    await page
+      .locator("[data-target-index]")
+      .isVisible()
+      .catch(() => false),
+    false,
+  );
+  assert.match(
+    await page.locator("#currentSignal").textContent(),
+    /TP3: 103.00 · مسجّل كمتحقق/,
+  );
+  assert.match(await page.locator("#usedStat").textContent(), /^1$/);
+  assert.match(
+    await page.locator("#currentSignal").textContent(),
+    /ليست توصية دخول جديدة/,
+  );
+});
