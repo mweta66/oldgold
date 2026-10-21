@@ -90,6 +90,7 @@ const notify = (text) => {
 };
 
 async function api(path, { method = "GET", data } = {}) {
+  const requestGeneration = generation;
   let response;
   try {
     response = await fetch(path, {
@@ -118,13 +119,30 @@ async function api(path, { method = "GET", data } = {}) {
   try {
     payload = await response.json();
   } catch {
+    const resource =
+      {
+        "/api/health": "فحص الخدمة",
+        "/api/me": "جلسة الحساب",
+        "/api/signals": "الإشارات",
+        "/api/history": "سجل الصفقات",
+        "/api/admin/overview": "لوحة الإدارة",
+      }[path.split("?")[0]] || "خدمة الحسابات";
     throw Object.assign(
-      new Error("الخدمة غير متاحة. تواصل مع إدارة WetaGold."),
+      new Error(
+        `رد الخدمة غير صالح (${resource}؛ HTTP ${response.status}). حاول مجددًا.`,
+      ),
       { code: "SERVICE_RESPONSE_INVALID", status: response.status },
     );
   }
   if (!response.ok) {
-    if (response.status === 401 && path !== "/api/login") setSession(null);
+    if (
+      response.status === 401 &&
+      path !== "/api/login" &&
+      requestGeneration === generation
+    ) {
+      setSession(null);
+      message("#globalError", "انتهت جلسة الدخول. سجّل الدخول مجددًا.");
+    }
     throw Object.assign(new Error(payload.error || "تعذر تنفيذ العملية."), {
       status: response.status,
       code: payload.code,
@@ -144,8 +162,14 @@ function setServiceReady(ready) {
   $("#submitLogin").disabled = !ready;
 }
 function showServiceUnavailable(err) {
+  if (user) {
+    message(
+      "#globalError",
+      `تعذر تحديث البيانات: ${err.message} البيانات المعروضة من آخر تحديث ناجح. أعد المحاولة بزر «تحديث».`,
+    );
+    return;
+  }
   if ($("#loginDialog").open) $("#loginDialog").close();
-  setSession(null);
   setServiceReady(false);
   message("#serviceExplanation", err.message);
   $("#serviceNotice").hidden = false;
@@ -702,7 +726,8 @@ async function refreshOnce() {
     if (version !== generation) return;
     if (!session.user) {
       setSession(null);
-      throw new Error("انتهت جلسة الدخول. سجّل الدخول مجددًا.");
+      message("#globalError", "انتهت جلسة الدخول. سجّل الدخول مجددًا.");
+      return;
     }
     user = session.user;
     csrf = session.csrf;
@@ -736,10 +761,12 @@ async function refreshOnce() {
     $("#lastUpdate").textContent = `آخر مزامنة: ${date(Date.now())}`;
     message("#globalError", "");
   } catch (err) {
-    if (version === generation || !user) {
-      clearSignals();
+    if (version === generation) {
       if (unavailable(err)) showServiceUnavailable(err);
-      else message("#globalError", err.message);
+      else {
+        clearSignals();
+        message("#globalError", err.message);
+      }
     }
   } finally {
     $("#refreshButton").disabled = false;

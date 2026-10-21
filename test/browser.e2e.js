@@ -184,6 +184,189 @@ test("unavailable backend disables login until health and session checks succeed
   assert.equal(await page.locator("#loginDialog").isVisible(), true);
 });
 
+test("temporary service failures after login preserve the session, last data and unsaved edits, then recover", async (t) => {
+  const { f, page, context } = await brandedPage(t);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const admin = await f.login();
+  await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  let failingPath = "/api/admin/overview",
+    failure = "html";
+  await context.route("**/api/**", (route) => {
+    if (new URL(route.request().url()).pathname !== failingPath)
+      return route.continue();
+    if (failure === "network") return route.abort("failed");
+    return route.fulfill({
+      status: failure === "html" ? 502 : 503,
+      contentType: failure === "html" ? "text/html" : "application/json",
+      body:
+        failure === "html"
+          ? "<h1>Temporary upstream failure</h1>"
+          : JSON.stringify({ error: "خدمة الحسابات غير متاحة مؤقتًا." }),
+    });
+  });
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#globalError")
+      .textContent.includes("تعذر تحديث البيانات"),
+  );
+  assert.equal(await page.locator("#adminPanel").isVisible(), true);
+  assert.equal(await page.locator("#serviceNotice").isVisible(), false);
+  assert.match(
+    await page.locator("#globalError").textContent(),
+    /لوحة الإدارة؛ HTTP 502/,
+  );
+  assert.doesNotMatch(
+    await page.locator("#globalError").textContent(),
+    /Temporary upstream failure/,
+  );
+  assert.equal(await page.locator("#currentSignal .signal-item").count(), 1);
+  const sessionCookie = (await context.cookies()).find(
+    (c) => c.name === "wg_session",
+  );
+  assert.ok(sessionCookie);
+  await page.locator("#userEmail").fill("unsaved@example.test");
+  for (const [path, mode] of [
+    ["/api/me", "network"],
+    ["/api/me", "json"],
+    ["/api/signals", "html"],
+    ["/api/admin/overview", "json"],
+  ]) {
+    failingPath = path;
+    failure = mode;
+    await page.locator("#refreshButton").click();
+    await page.waitForFunction(
+      () => !document.querySelector("#refreshButton").disabled,
+    );
+    assert.equal(await page.locator("#adminPanel").isVisible(), true, path);
+    assert.equal(await page.locator("#landing").isVisible(), false, path);
+    assert.equal(await page.locator("#serviceNotice").isVisible(), false, path);
+    assert.match(
+      await page.locator("#globalError").textContent(),
+      /تعذر تحديث البيانات/,
+    );
+    assert.equal(
+      await page.locator("#userEmail").inputValue(),
+      "unsaved@example.test",
+    );
+    assert.equal(await page.locator("#currentSignal .signal-item").count(), 1);
+    assert.equal(
+      (await context.cookies()).find((c) => c.name === "wg_session")?.value,
+      sessionCookie.value,
+    );
+    failingPath = "";
+    await page.locator("#refreshButton").click();
+    await page.waitForFunction(
+      () =>
+        document.querySelector("#globalError").hidden &&
+        !document.querySelector("#refreshButton").disabled,
+    );
+    assert.equal(await page.locator("#adminPanel").isVisible(), true);
+    assert.equal(
+      await page.locator("#userEmail").inputValue(),
+      "unsaved@example.test",
+    );
+  }
+});
+
+test("an expired session or a genuine authenticated API 401 still clears private panels", async (t) => {
+  const { f, page, context } = await brandedPage(t);
+  let unauthorized = false;
+  await context.route("**/api/signals", (route) =>
+    unauthorized
+      ? route.fulfill({
+          status: 401,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "سجّل الدخول أولًا." }),
+        })
+      : route.continue(),
+  );
+  await page.goto(f.origin);
+  for (const mode of ["401", "expired"]) {
+    await page.locator("#loginButton").click();
+    await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+    await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+    await page.locator("#submitLogin").click();
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#lastUpdate")
+        .textContent.startsWith("آخر مزامنة:"),
+    );
+    if (mode === "401") unauthorized = true;
+    else f.advance(13 * 3600000);
+    await page.locator("#refreshButton").click();
+    await page.waitForSelector("#landing", { state: "visible" });
+    assert.equal(await page.locator("#adminPanel").isVisible(), false);
+    assert.equal(await page.locator("#memberPanel").isVisible(), false);
+    assert.equal(await page.locator("#identity").textContent(), "");
+    assert.equal(await page.locator("iframe").count(), 0);
+    assert.equal(await page.locator("#serviceNotice").isVisible(), false);
+    assert.match(
+      await page.locator("#globalError").textContent(),
+      /انتهت جلسة الدخول/,
+    );
+    unauthorized = false;
+  }
+});
+
+test("a delayed 401 from an earlier session cannot log out a freshly signed-in session", async (t) => {
+  const { f, page, context } = await brandedPage(t);
+  let releaseOverview,
+    markOverview,
+    firstOverview = true;
+  const overviewGate = new Promise((resolve) => {
+    releaseOverview = resolve;
+  });
+  const overviewSeen = new Promise((resolve) => {
+    markOverview = resolve;
+  });
+  t.after(() => releaseOverview());
+  await context.route("**/api/admin/overview", async (route) => {
+    if (!firstOverview) return route.continue();
+    firstOverview = false;
+    markOverview();
+    await overviewGate;
+    return route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "انتهت الجلسة السابقة." }),
+    });
+  });
+  await page.goto(f.origin);
+  for (const first of [true, false]) {
+    await page.locator("#loginButton").click();
+    await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+    await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+    await page.locator("#submitLogin").click();
+    await page.waitForSelector("#adminPanel", { state: "visible" });
+    if (first) {
+      await overviewSeen;
+      await page.locator("#logoutButton").click();
+      await page.waitForSelector("#landing", { state: "visible" });
+    }
+  }
+  releaseOverview();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  assert.equal(await page.locator("#adminPanel").isVisible(), true);
+  assert.equal(await page.locator("#landing").isVisible(), false);
+  assert.equal(await page.locator("#serviceNotice").isVisible(), false);
+  assert.equal(await page.locator("#globalError").isVisible(), false);
+  assert.match(
+    await page.locator("#identity").textContent(),
+    /admin@example\.test/,
+  );
+});
+
 test("manifest carries same-origin preview credentials and does not redirect to Vercel SSO", async (t) => {
   const { f, page, context } = await brandedPage(t);
   await context.addCookies([
