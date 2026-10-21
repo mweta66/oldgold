@@ -182,10 +182,12 @@ test("runtime diagnostics report fixed categories without returning raw logs or 
   const report = await cloudReadiness(env, fetcher);
   const p = report.vercel.matchingProjects[0];
   assert.equal(p.publicHealth.code, "FUNCTION_INVOCATION_FAILED");
-  assert.deepEqual(p.runtimeDiagnostics, {
-    available: true,
-    categories: ["ERR_MODULE_NOT_FOUND", "SUPABASE_PACKAGE_MISSING"],
-  });
+  assert.equal(p.runtimeDiagnostics.available, true);
+  assert(p.runtimeDiagnostics.byteCount > 0);
+  assert.deepEqual(p.runtimeDiagnostics.categories, [
+    "ERR_MODULE_NOT_FOUND",
+    "SUPABASE_PACKAGE_MISSING",
+  ]);
   const text = JSON.stringify(report);
   assert(!text.includes(env.VERCEL_TOKEN));
   assert(!text.includes("unrelated-private-info"));

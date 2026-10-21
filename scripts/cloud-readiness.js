@@ -170,6 +170,7 @@ export async function cloudReadiness(env, fetcher = fetch) {
         );
         const variables = Array.isArray(project.env) ? project.env : [];
         let publicHealth = null;
+        let healthEndpoint;
         if (repositoryMatches) {
           const domainList = await request(
             "vercel",
@@ -190,16 +191,14 @@ export async function cloudReadiness(env, fetcher = fetch) {
           const custom = domains.filter((d) => !d.name.endsWith(".vercel.app"));
           const selected = custom.length ? custom : domains;
           if (selected.length === 1) {
+            healthEndpoint = `https://${selected[0].name}/api/health`;
             try {
-              const response = await fetcher(
-                `https://${selected[0].name}/api/health`,
-                {
-                  method: "GET",
-                  redirect: "error",
-                  signal: AbortSignal.timeout(10000),
-                  headers: {},
-                },
-              );
+              const response = await fetcher(healthEndpoint, {
+                method: "GET",
+                redirect: "error",
+                signal: AbortSignal.timeout(10000),
+                headers: {},
+              });
               publicHealth = { status: response.status, healthy: false };
               try {
                 const text = await response.text();
@@ -265,6 +264,15 @@ export async function cloudReadiness(env, fetcher = fetch) {
             if (!response.ok)
               runtimeDiagnostics.error = `HTTP_${response.status}`;
             else {
+              // Runtime logs are streamed. Generate a health request while the
+              // stream is open instead of depending on retained historical logs.
+              if (healthEndpoint)
+                await fetcher(healthEndpoint, {
+                  method: "GET",
+                  redirect: "error",
+                  signal: AbortSignal.timeout(10000),
+                  headers: {},
+                });
               reader = response.body.getReader();
               const decoder = new TextDecoder();
               for (let n = 0; n < 16 && text.length < 131072; n++) {
@@ -279,6 +287,7 @@ export async function cloudReadiness(env, fetcher = fetch) {
               categories: [],
               error: "REQUEST_FAILED",
             };
+            runtimeDiagnostics.streamIncomplete = true;
           } finally {
             if (reader) await reader.cancel().catch(() => {});
           }
@@ -294,7 +303,15 @@ export async function cloudReadiness(env, fetcher = fetch) {
             ERR_UNKNOWN_FILE_EXTENSION: /ERR_UNKNOWN_FILE_EXTENSION/,
             ERR_PACKAGE_PATH_NOT_EXPORTED: /ERR_PACKAGE_PATH_NOT_EXPORTED/,
             UNDEFINED_RUNTIME_STATE: /Cannot read properties of undefined/,
+            REFERENCE_ERROR: /ReferenceError/,
+            TYPE_ERROR: /TypeError/,
+            SYNTAX_ERROR: /SyntaxError/,
+            REQUIRE_IS_NOT_DEFINED: /require is not defined/,
+            DIRNAME_IS_NOT_DEFINED: /__dirname is not defined/,
+            EXPORTS_IS_NOT_DEFINED: /exports is not defined/,
+            CLASS_EXTENDS_UNDEFINED: /Class extends value undefined/,
           };
+          runtimeDiagnostics.byteCount = text.length;
           runtimeDiagnostics.categories = Object.entries(patterns)
             .filter(([, pattern]) => pattern.test(text))
             .map(([code]) => code);
