@@ -676,7 +676,19 @@ test("trade history shows real dates, all-time pages, filters, honest errors and
       document.querySelectorAll("#history tbody tr").length === 20 &&
       document.querySelector("#historySummary").textContent.includes("25"),
   );
-  assert.equal(await page.locator("#currentSignal .signal-item").count(), 0);
+  assert.equal(await page.locator("#currentSignal .signal-item").count(), 1);
+  assert.equal(
+    await page.locator("#currentSignalTitle").textContent(),
+    "آخر صفقة لحسابك",
+  );
+  assert.match(
+    await page.locator("#currentSignal").textContent(),
+    /ليست توصية دخول جديدة/,
+  );
+  assert.equal(
+    await page.locator("#currentSignal time").getAttribute("datetime"),
+    new Date(f.now() - 1000).toISOString(),
+  );
   const dateNode = page.locator("#history time").first();
   assert.match(await dateNode.getAttribute("datetime"), /^\d{4}-\d{2}-\d{2}T/);
   assert.match(await dateNode.textContent(), /UTC/);
@@ -795,6 +807,75 @@ test("trade history shows real dates, all-time pages, filters, honest errors and
     () => document.querySelectorAll("#history tbody tr").length === 0,
   );
   assert.equal(await page.locator("#tradeHistory").isVisible(), false);
+});
+
+test("latest-trade card covers all-time history, honest missing entry times and active-signal precedence", async (t) => {
+  const { f, page } = await brandedPage(t),
+    admin = await f.login();
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  assert.match(
+    await page.locator("#currentSignal").textContent(),
+    /لا توجد صفقة حالية أو صفقات سابقة/,
+  );
+  assert.equal(await page.locator("#currentSignal .signal-item").count(), 0);
+  const first = await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  await f.request(`/api/admin/signals/${first.body.id}`, {
+    method: "PATCH",
+    auth: admin,
+    data: { status: "cancelled" },
+  });
+  const old = f.now() - 130 * 86400000;
+  f.app.db
+    .prepare("UPDATE signals SET created_at=?,expires_at=? WHERE id=?")
+    .run(old, old + 900000, first.body.id);
+  await page.locator("#refreshButton").click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector("#currentSignalTitle").textContent ===
+      "آخر صفقة لحسابك",
+  );
+  assert.equal(await page.locator("#currentSignal .signal-item").count(), 1);
+  assert.match(await page.locator("#currentSignal").textContent(), /ملغاة/);
+  assert.match(
+    await page.locator("#currentSignal").textContent(),
+    /وقت الدخول الفعلي: غير مسجّل/,
+  );
+  assert.equal(await page.locator("#currentSignal time").count(), 0);
+  assert.equal(await page.locator("#currentSignal form").count(), 0);
+  const next = await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  await page.locator("#refreshButton").click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector("#currentSignalTitle").textContent ===
+      "الإشارات الحالية",
+  );
+  assert.match(
+    await page.locator("#currentSignal").textContent(),
+    new RegExp(`#${next.body.id}`),
+  );
+  assert.doesNotMatch(
+    await page.locator("#currentSignal").textContent(),
+    /ليست توصية دخول جديدة/,
+  );
+  assert.equal(await page.locator("#currentSignal form").count(), 1);
+  await page.locator("#logoutButton").click();
+  await page.waitForSelector("#landing", { state: "visible" });
+  assert.equal(await page.locator("#currentSignal .signal-item").count(), 0);
 });
 
 test("first administrator must replace a temporary password before accessing the admin interface", async (t) => {

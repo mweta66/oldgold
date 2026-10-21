@@ -173,3 +173,79 @@ test("opening, closing and expiry retain authentic event timestamps; old open tr
   assert.equal(row.closedAt, expiry);
   assert.equal(row.openedAt, null);
 });
+
+test("latest trade is all-time, allocation-scoped, read-only for quota and absent while active signals exist", async (t) => {
+  const f = await fixture();
+  t.after(() => f.app.close());
+  const admin = await f.login(),
+    input = f.account("latest@example.test", 1);
+  await f.request("/api/admin/users", {
+    method: "POST",
+    auth: admin,
+    data: input,
+  });
+  const member = await f.login(input.email, input.password);
+  const first = await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  await f.request(`/api/admin/signals/${first.body.id}`, {
+    method: "PATCH",
+    auth: admin,
+    data: { status: "open" },
+  });
+  const openedAt = f.now();
+  await f.request(`/api/admin/signals/${first.body.id}`, {
+    method: "PATCH",
+    auth: admin,
+    data: { status: "target" },
+  });
+  const old = f.now() - 130 * 86400000;
+  f.app.db
+    .prepare("UPDATE signals SET created_at=?,expires_at=? WHERE id=?")
+    .run(old, old + 900000, first.body.id);
+  const second = await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  await f.request(`/api/admin/signals/${second.body.id}`, {
+    method: "PATCH",
+    auth: admin,
+    data: { status: "cancelled" },
+  });
+  assert.equal((await f.request("/api/signals")).status, 401);
+  const personal = await f.request("/api/signals", { auth: member });
+  assert.equal(personal.body.signals.length, 0);
+  assert.equal(personal.body.latestSignal.id, first.body.id);
+  assert.equal(personal.body.latestSignal.openedAt, openedAt);
+  assert.equal(personal.body.user.used, 1);
+  const owner = await f.request("/api/signals", { auth: admin });
+  assert.equal(owner.body.latestSignal.id, second.body.id);
+  assert.equal(owner.body.latestSignal.openedAt, null);
+  const empty = f.account("no-latest@example.test", 1);
+  await f.request("/api/admin/users", {
+    method: "POST",
+    auth: admin,
+    data: empty,
+  });
+  const newcomer = await f.login(empty.email, empty.password);
+  assert.equal(
+    (await f.request("/api/signals", { auth: newcomer })).body.latestSignal,
+    null,
+  );
+  await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: f.signal(),
+  });
+  assert.equal(
+    (await f.request("/api/signals", { auth: admin })).body.latestSignal,
+    null,
+  );
+  assert.equal(
+    (await f.request("/api/me", { auth: member })).body.user.used,
+    1,
+  );
+});

@@ -3,6 +3,7 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 let user = null,
   csrf = "",
   signals = [],
+  latestSignal = null,
   overview = null,
   refreshTask = null,
   refreshAgain = false,
@@ -177,6 +178,8 @@ function showServiceUnavailable(err) {
 
 function clearSignals() {
   signals = [];
+  latestSignal = null;
+  $("#currentSignalTitle").textContent = "الإشارات الحالية";
   historySerial++;
   historyData = null;
   historyBusy = false;
@@ -351,11 +354,13 @@ function signalCard(signal) {
     Math.abs(signal.target - signal.entry) /
     Math.abs(signal.entry - signal.stop);
   const meta = element("div", undefined, "signal-meta");
+  const opened = element("span");
+  opened.append(element("span", "وقت الدخول الفعلي: "), stamp(signal.openedAt));
   meta.append(
     element("span", `رقم الإشارة: #${signal.id} · ${signal.symbol}`),
     element("span", `العائد للمخاطرة: 1 : ${risk.toFixed(2)}`),
     element("span", `صدرت: ${date(signal.createdAt)}`),
-    element("span", `فُتحت: ${date(signal.openedAt)}`),
+    opened,
     element("span", `أُغلقت / انتهت: ${date(signal.closedAt)}`),
     element("span", `صلاحية الدخول: ${date(signal.expiresAt)}`),
     element("span", `السعر المرجعي عند النشر: ${price(signal.referencePrice)}`),
@@ -398,16 +403,36 @@ function renderSignals() {
   const activeSignals = signals.filter((signal) =>
     ["pending", "open"].includes(signal.status),
   );
+  // A newly published signal may arrive between the active and history reads.
+  if (
+    !activeSignals.length &&
+    ["pending", "open"].includes(latestSignal?.status)
+  )
+    activeSignals.push(latestSignal);
+  $("#currentSignalTitle").textContent = activeSignals.length
+    ? "الإشارات الحالية"
+    : latestSignal
+      ? "آخر صفقة لحسابك"
+      : "الإشارات الحالية";
   $("#currentSignal").replaceChildren(
     ...(activeSignals.length
       ? activeSignals.map(signalCard)
-      : [
-          element(
-            "div",
-            "لا توجد إشارات نشطة الآن. الصفقات السابقة موجودة في سجل الصفقات بالأسفل.",
-            "empty-state",
-          ),
-        ]),
+      : latestSignal
+        ? [
+            element(
+              "p",
+              "لا توجد صفقة حالية. هذه آخر صفقة منشورة متاحة لحسابك للمتابعة فقط، وليست توصية دخول جديدة.",
+              "muted small",
+            ),
+            signalCard(latestSignal),
+          ]
+        : [
+            element(
+              "div",
+              "لا توجد صفقة حالية أو صفقات سابقة متاحة لحسابك حتى الآن. تظهر الإشارات عند نشرها وتخصيصها لحسابك.",
+              "empty-state",
+            ),
+          ]),
   );
 }
 
@@ -738,6 +763,7 @@ async function refreshOnce() {
       if (version !== generation) return;
       user = result.user;
       signals = result.signals;
+      latestSignal = result.latestSignal ?? null;
       renderAccount();
       renderSignals();
       await loadHistory();

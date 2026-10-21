@@ -512,6 +512,78 @@ test("Supabase SDK history delegates validated paging and UTC dates to a private
   assert.equal(f.tables.wg_profiles.find((p) => p.id === MEMBER).used, 0);
 });
 
+test("Supabase latest trade reuses private all-time history without leaking other allocations, changing quota or guessing entry times", async (t) => {
+  const f = await fixture(t),
+    admin = await f.login(),
+    member = await f.login("member@example.test");
+  const old = new Date(Date.now() - 130 * 86400000).toISOString();
+  const row = {
+    id: 1,
+    symbol: "OANDA:XAUUSD",
+    direction: "buy",
+    status: "target",
+    entry: 100,
+    stop: 99,
+    target: 101.5,
+    reference_price: 100,
+    created_at: old,
+    quote_at: old,
+    expires_at: old,
+    opened_at: old,
+    closed_at: old,
+    author_id: ADMIN,
+    request_id: "private-latest-request",
+  };
+  f.tables.wg_signals.push(row, {
+    ...row,
+    id: 2,
+    status: "cancelled",
+    opened_at: null,
+    created_at: new Date().toISOString(),
+  });
+  f.tables.wg_allocations.push({ user_id: MEMBER, signal_id: 1 });
+  assert.equal((await f.request("/api/signals")).status, 401);
+  const personal = await f.request(`/api/signals?p_user=${ADMIN}`, {
+    auth: member,
+  });
+  assert.equal(personal.body.latestSignal.id, 1);
+  assert.equal(personal.body.latestSignal.openedAt, Date.parse(old));
+  assert.doesNotMatch(
+    JSON.stringify(personal.body.latestSignal),
+    /author_id|private-latest-request|test-server-secret/,
+  );
+  const args = f.calls.find((c) => c.path.endsWith("/wg_history")).data;
+  assert.deepEqual(args, {
+    p_user: MEMBER,
+    p_page: 1,
+    p_status: "all",
+    p_direction: "all",
+    p_from: null,
+    p_to: null,
+  });
+  const owner = await f.request("/api/signals", { auth: admin });
+  assert.equal(owner.body.latestSignal.id, 2);
+  assert.equal(owner.body.latestSignal.openedAt, null);
+  f.tables.wg_allocations.length = 0;
+  assert.equal(
+    (await f.request("/api/signals", { auth: member })).body.latestSignal,
+    null,
+  );
+  f.tables.wg_signals.push({ ...row, id: 3, status: "open" });
+  const historyCalls = f.calls.filter((c) =>
+    c.path.endsWith("/wg_history"),
+  ).length;
+  assert.equal(
+    (await f.request("/api/signals", { auth: admin })).body.latestSignal,
+    null,
+  );
+  assert.equal(
+    f.calls.filter((c) => c.path.endsWith("/wg_history")).length,
+    historyCalls,
+  );
+  assert.equal(f.tables.wg_profiles.find((p) => p.id === MEMBER).used, 0);
+});
+
 test("Supabase account provisioning uses Auth Admin API and never accepts a submitted admin role", async (t) => {
   const f = await fixture(t),
     admin = await f.login(),

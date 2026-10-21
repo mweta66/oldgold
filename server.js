@@ -328,8 +328,24 @@ export async function createApp(options = {}) {
       const closed = rows.filter((row) =>
         ["target", "stopped"].includes(row.status),
       );
+      const latest = rows.some((row) =>
+        ["pending", "open"].includes(row.status),
+      )
+        ? null
+        : user.role === "admin"
+          ? db
+              .prepare(
+                "SELECT * FROM signals ORDER BY created_at DESC,id DESC LIMIT 1",
+              )
+              .get()
+          : db
+              .prepare(
+                "SELECT s.* FROM signals s JOIN allocations a ON a.signal_id=s.id WHERE a.user_id=? ORDER BY s.created_at DESC,s.id DESC LIMIT 1",
+              )
+              .get(user.id);
       return send({
         signals: rows.map(serializeSignal),
+        latestSignal: latest ? serializeSignal(latest) : null,
         user: publicUser(user, now()),
         stats: {
           closed: closed.length,
