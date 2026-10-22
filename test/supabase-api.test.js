@@ -1034,3 +1034,43 @@ test("manual publication reports the group outcome independently of member quota
     assert(!JSON.stringify(reply.body).includes("-1001"));
   }
 });
+
+test("Supabase preserves null optional references in protected signal/history responses and forwards omissions unchanged", async (t) => {
+  const f = await fixture(t),
+    auth = await f.login();
+  f.tables.wg_signals.push({
+    id: 1,
+    symbol: "OANDA:XAUUSD",
+    direction: "buy",
+    entry: 4000,
+    stop: 3990,
+    target: 4010,
+    status: "pending",
+    reference_price: null,
+    quote_at: null,
+    created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + 900000).toISOString(),
+  });
+  const published = await f.request("/api/admin/signals", {
+    method: "POST",
+    auth,
+    data: {
+      requestId: crypto.randomUUID(),
+      direction: "buy",
+      entry: 4000,
+      stop: 3990,
+      target: 4010,
+    },
+  });
+  assert.equal(published.status, 201);
+  const rpc = f.calls.find((c) => c.path.endsWith("/wg_publish"));
+  assert.equal(Object.hasOwn(rpc.data.p_data, "referencePrice"), false);
+  assert.equal(Object.hasOwn(rpc.data.p_data, "quoteAt"), false);
+  for (const path of ["/api/signals", "/api/history"]) {
+    const response = await f.request(path, { auth });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.signals[0].referencePrice, null);
+    assert.equal(response.body.signals[0].quoteAt, null);
+    assert(response.body.signals[0].createdAt);
+  }
+});

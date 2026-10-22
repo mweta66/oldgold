@@ -640,7 +640,10 @@ function signalCard(signal) {
     opened,
     element("span", `أُغلقت / انتهت: ${date(signal.closedAt)}`),
     element("span", `صلاحية الدخول: ${date(signal.expiresAt)}`),
-    element("span", `السعر المرجعي عند النشر: ${price(signal.referencePrice)}`),
+    element(
+      "span",
+      `السعر المرجعي عند النشر: ${signal.referencePrice == null ? "غير مضاف" : price(signal.referencePrice)}`,
+    ),
   );
   wrap.append(head, levels, meta);
   if (signal.marketStrategy) {
@@ -1702,8 +1705,10 @@ $("#signalForm").addEventListener("submit", async (event) => {
       stop: Number($("#stop").value),
       target: targets.at(-1),
       targets,
-      referencePrice: Number($("#referencePrice").value),
-      quoteAt: isoDate($("#quoteAt").value),
+      ...($("#referencePrice").value.trim()
+        ? { referencePrice: Number($("#referencePrice").value) }
+        : {}),
+      ...($("#quoteAt").value ? { quoteAt: isoDate($("#quoteAt").value) } : {}),
     };
     const fingerprint = JSON.stringify(data);
     if (draft?.fingerprint !== fingerprint)

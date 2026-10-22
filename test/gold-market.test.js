@@ -215,6 +215,7 @@ async function database(
     "004_multiple_targets.sql",
     "005_gold_market.sql",
     ...(rolling ? ["006_rolling_market_window.sql"] : []),
+    "007_optional_manual_reference.sql",
   ])
     await db.exec(
       await readFile(
@@ -606,7 +607,10 @@ test("PostgreSQL independently validates rolling coverage, rejects spoofed readi
 });
 
 test("database rejects a forged entry during a recent gap even when the worker fabricates matching counters", async (t) => {
-  const f = await database(t),
+  // A missing recent minute can invalidate a complete M15 seed bar. Seed a
+  // full eight hours so this test isolates the recent-gap guard at every
+  // wall-clock phase rather than sometimes hitting EMA warmup first.
+  const f = await database(t, { seedMinutes: 480 }),
     { db } = f;
   await db.exec(
     "delete from wg_market_quotes where quote_at in (select quote_at from wg_market_quotes order by quote_at desc offset 4 limit 1)",
@@ -638,6 +642,29 @@ test("database rejects a forged entry during a recent gap even when the worker f
     (await db.query("select count(*)::int as n from wg_signals")).rows[0].n,
     0,
   );
+});
+
+test("recent-gap rejection is stable across all fifteen M15 clock phases when indicator history is fully seeded", () => {
+  const anchor = Date.parse("2026-01-01T12:00:00Z");
+  for (let phase = 0; phase < 15; phase++) {
+    const cutoff = anchor + phase * MINUTE;
+    const quote = { at: cutoff + 30000, price: 4048 };
+    const history = quotes(cutoff, 481)
+      .slice(0, -1)
+      .map((q) => ({ ...q, at: q.at + 30000 }));
+    assert.equal(
+      goldDecision([...history, quote], quote).reason,
+      "ready",
+      `phase ${phase} baseline`,
+    );
+    history.splice(-5, 1);
+    const decision = goldDecision([...history, quote], quote);
+    assert(
+      decision.window.trendBars >= GOLD_STRATEGY.slow,
+      `phase ${phase} seeding`,
+    );
+    assert.equal(decision.reason, "recent_gap", `phase ${phase} recent gap`);
+  }
 });
 
 test("SQL and JavaScript agree on rolling coverage across M15 boundaries, partial minutes and source gaps", async (t) => {

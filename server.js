@@ -654,9 +654,16 @@ export async function createApp(options = {}) {
       return send({ ok: true });
     }
     if (method === "POST" && path === "/api/admin/signals") {
-      const data = await bodyOf(req),
-        quoteAt = timestamp(data.quoteAt);
-      const prices = [data.entry, data.stop, data.target, data.referencePrice];
+      const data = await bodyOf(req);
+      const missing = (value) =>
+        value == null ||
+        value === "" ||
+        (typeof value === "string" && !value.trim());
+      const referencePrice = missing(data.referencePrice)
+        ? null
+        : data.referencePrice;
+      const quoteAt = missing(data.quoteAt) ? null : timestamp(data.quoteAt);
+      const prices = [data.entry, data.stop, data.target];
       const targets = validateTargets(data);
       if (
         !prices.every(
@@ -673,14 +680,26 @@ export async function createApp(options = {}) {
       )
         throw error(400, "مستويات الدخول والوقف والهدف لا تتوافق مع الاتجاه.");
       if (
-        !Number.isFinite(quoteAt) ||
-        quoteAt > now() + 5000 ||
-        now() - quoteAt > 300000
+        quoteAt !== null &&
+        (!Number.isFinite(quoteAt) ||
+          quoteAt > now() + 5000 ||
+          now() - quoteAt > 300000)
       )
         throw error(400, "السعر المرجعي يجب أن يكون خلال آخر خمس دقائق.");
       if (
-        Math.abs(data.entry - data.referencePrice) / data.referencePrice >
-        0.02
+        referencePrice !== null &&
+        (typeof referencePrice !== "number" ||
+          !Number.isFinite(referencePrice) ||
+          referencePrice <= 0 ||
+          referencePrice >= 1000000)
+      )
+        throw error(
+          400,
+          "السعر المرجعي الاختياري غير صالح؛ صححه أو اتركه فارغًا.",
+        );
+      if (
+        referencePrice !== null &&
+        Math.abs(data.entry - referencePrice) / referencePrice > 0.02
       )
         throw error(
           400,
@@ -726,7 +745,7 @@ export async function createApp(options = {}) {
             now(),
             now() + 900000,
             quoteAt,
-            data.referencePrice,
+            referencePrice,
             admin.id,
             JSON.stringify(targets),
           );
