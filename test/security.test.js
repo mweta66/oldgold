@@ -28,6 +28,24 @@ test("anonymous API access, static allowlist and security headers", async (t) =>
   assert.match(html, /id="memberPanel" hidden/);
 });
 
+test("public administration contact links to the owner's current Telegram chat without credentials or a group invite", async (t) => {
+  const f = await fixture();
+  t.after(() => f.app.close());
+  const html = await (await fetch(f.origin)).text();
+  const contact = html.match(/<a\s+id="adminContact"[\s\S]*?<\/a>/)?.[0];
+  assert.ok(contact);
+  assert.match(contact, /href="https:\/\/t\.me\/weta993"/);
+  assert.match(contact, /target="_blank"/);
+  assert.match(contact, /rel="noopener noreferrer"/);
+  assert.match(contact, /referrerpolicy="no-referrer"/);
+  assert.match(contact, /تواصل مع الإدارة/);
+  assert.doesNotMatch(
+    contact.split(">")[0],
+    /\s(?:hidden|disabled)(?:\s|=|$)/i,
+  );
+  assert.doesNotMatch(contact, /mosalem93|token|\?start=|t\.me\/\+/i);
+});
+
 test("password authentication, session cookies, CSRF and logout invalidation", async (t) => {
   const f = await fixture();
   t.after(() => f.app.close());
