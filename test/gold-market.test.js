@@ -295,6 +295,64 @@ async function database(
   };
 }
 
+test("manual publishing still queues the private group after every market migration, even with zero entitled members", async (t) => {
+  const f = await database(t),
+    { db, admin } = f;
+  await db.exec("update wg_profiles set quota=0 where role='member'");
+  const data = {
+    requestId: crypto.randomUUID(),
+    direction: "sell",
+    entry: 4000,
+    stop: 4010,
+    target: 3970,
+    targets: [3990, 3980, 3970],
+    referencePrice: 4000,
+    quoteAt: new Date().toISOString(),
+  };
+  const publish = async (input = data) =>
+    (
+      await db.query("select wg_publish($1,$2::jsonb,'-1001') as value", [
+        admin,
+        JSON.stringify(input),
+      ])
+    ).rows[0].value;
+  const first = await publish();
+  assert.equal(first.recipients, 0);
+  assert.equal((await publish()).duplicate, true);
+  const queue = (
+    await db.query(
+      "select o.signal_id,o.user_id,o.destination,o.state,e.kind,e.snapshot->>'symbol' as symbol from wg_outbox o join wg_signal_events e on e.id=o.event_id",
+    )
+  ).rows;
+  assert.equal(queue.length, 1);
+  assert.equal(Number(queue[0].signal_id), first.id);
+  assert.equal(queue[0].user_id, null);
+  assert.equal(queue[0].destination, "-1001");
+  assert.equal(queue[0].kind, "publish");
+  assert.equal(queue[0].symbol, "OANDA:XAUUSD");
+  assert.equal(queue[0].state, "pending");
+  const claimed = (await db.query("select * from wg_claim_delivery(20)")).rows;
+  assert.equal(claimed.length, 1);
+  assert.equal(Number(claimed[0].signal_id), first.id);
+  await assert.rejects(
+    publish({
+      ...data,
+      requestId: crypto.randomUUID(),
+      quoteAt: new Date(Date.now() - 600000).toISOString(),
+    }),
+    /WG:/,
+  );
+  assert.equal(
+    (await db.query("select count(*)::int as n from wg_signals")).rows[0].n,
+    1,
+  );
+  assert.equal(
+    (await db.query("select used from wg_profiles where role='member'")).rows[0]
+      .used,
+    0,
+  );
+});
+
 test("real PostgreSQL market lease, atomic allocation, immutable TP event snapshots and duplicate protection", async (t) => {
   const f = await database(t),
     { db } = f;

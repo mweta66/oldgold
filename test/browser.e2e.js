@@ -499,6 +499,115 @@ test("refresh cannot re-enable publication or accept a duplicate submission whil
   assert.equal(await page.locator("#entry").inputValue(), "");
 });
 
+test("mobile manual publication keeps rejected input and shows persistent, separate saving and Telegram outcomes beside the button", async (t) => {
+  const { f, page, context } = await brandedPage(t, {
+    viewport: { width: 390, height: 844 },
+  });
+  let posts = 0;
+  let status = 400;
+  let reply = {
+    error: "السعر المرجعي يجب أن يكون خلال آخر خمس دقائق.",
+    code: "VALIDATION_ERROR",
+  };
+  const requests = [];
+  await context.route("**/api/admin/signals", async (route) => {
+    posts++;
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({
+      status,
+      contentType: "application/json",
+      body: JSON.stringify(reply),
+    });
+  });
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  const fillSignal = async () => {
+    for (const [id, value] of [
+      ["entry", "4000"],
+      ["stop", "3990"],
+      ["target", "4010"],
+      ["referencePrice", "4000"],
+      ["quoteAt", localInput(f.now(), EGYPT_ZONE)],
+    ])
+      await page.locator(`#${id}`).fill(value);
+  };
+  await fillSignal();
+  await page.locator("#publishButton").click();
+  const feedback = page.locator("#signalPublishMessage");
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#signalPublishMessage")
+      .textContent.includes("خمس دقائق"),
+  );
+  assert.equal(posts, 1);
+  assert.equal(await page.locator("#entry").inputValue(), "4000");
+  assert.equal(await page.locator("#publishButton").isDisabled(), false);
+  assert.equal(await feedback.isVisible(), true);
+  const box = await feedback.boundingBox();
+  assert(box.y >= 0 && box.y + box.height <= 844);
+
+  status = 201;
+  reply = { id: 1, recipients: 0, telegramGroup: "pending" };
+  await page.locator("#publishButton").click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#signalPublishMessage")
+      .textContent.includes("في الانتظار"),
+  );
+  assert.equal(requests[1].requestId, requests[0].requestId);
+  assert.match(await feedback.textContent(), /حفظ الإشارة.*0 مشترك/);
+  assert.doesNotMatch(await feedback.textContent(), /تم إرسال الإشارة/);
+  assert.equal(await page.locator("#entry").inputValue(), "");
+  await page.locator("#refreshButton").click();
+  await page.waitForFunction(
+    () => !document.querySelector("#refreshButton").disabled,
+  );
+  assert.match(await feedback.textContent(), /في الانتظار/);
+
+  reply = { id: 2, recipients: 0, telegramGroup: "sent" };
+  await fillSignal();
+  await page.locator("#publishButton").click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#signalPublishMessage")
+      .textContent.includes("تم إرسال الإشارة"),
+  );
+  assert.notEqual(requests[2].requestId, requests[1].requestId);
+  await page.locator("#logoutButton").click();
+  await page.waitForSelector("#heroLogin", { state: "visible" });
+  assert.equal(await feedback.textContent(), "");
+});
+
+test("manual publication explains native browser field validation before any request", async (t) => {
+  const { f, page } = await brandedPage(t, {
+    viewport: { width: 390, height: 844 },
+  });
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  await page.locator("#publishButton").click();
+  assert.match(
+    await page.locator("#signalPublishMessage").textContent(),
+    /لم تُنشر الإشارة/,
+  );
+  assert.equal(
+    (await f.request("/api/signals", { auth: await f.login() })).body.signals
+      .length,
+    0,
+  );
+});
+
 test("administrator research is explicitly hypothetical, survives provider failures and clears on logout", async (t) => {
   const { f, page, context } = await brandedPage(t, {
     viewport: { width: 390, height: 844 },

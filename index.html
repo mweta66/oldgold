@@ -547,7 +547,7 @@
               أدخل المستويات من OANDA:XAUUSD بعد مراجعتها. الأسعار لا تُقرأ
               تلقائيًا من الشارت.
             </p>
-            <form id="signalForm">
+            <form id="signalForm" aria-describedby="signalPublishMessage">
               <div class="field">
                 <label for="direction">الاتجاه</label
                 ><select id="direction">
@@ -620,12 +620,22 @@
                 </div>
               </div>
               <p class="small muted">
-                صلاحية الإشارة المعلقة 15 دقيقة. تخصم إشارة واحدة من حصة كل
-                مشترك مؤهل عند النشر.
+                وقت السعر المرجعي لازم يكون خلال آخر خمس دقائق بتوقيت مصر؛ راجع
+                السعر ووقته قبل النشر. صلاحية الإشارة المعلقة 15 دقيقة. تخصم
+                إشارة واحدة من حصة كل مشترك مؤهل عند النشر. إرسال الجروب مستقل
+                عن عدد المشتركين المستحقين.
               </p>
               <button class="primary-btn" id="publishButton" type="submit">
                 نشر وإرسال للمستحقين
               </button>
+              <p
+                id="signalPublishMessage"
+                class="message"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                hidden
+              ></p>
             </form>
           </article>
         </div>
