@@ -29,6 +29,8 @@ const tables = [
   "wg_outbox",
   "wg_audit",
   "wg_signal_events",
+  "wg_market_state",
+  "wg_market_quotes",
 ];
 const files = () =>
   [
@@ -36,6 +38,7 @@ const files = () =>
     "002_trade_history.sql",
     "003_telegram_events.sql",
     "004_multiple_targets.sql",
+    "005_gold_market.sql",
   ].map((name) => ({
     version: name.slice(0, 3),
     sql: readFileSync(
@@ -88,11 +91,12 @@ function fixture(options = {}) {
         if (sql.includes("as private_tables"))
           return json([
             {
-              private_tables: 9,
+              private_tables: 11,
               browser_readable: options.unsafe ? 1 : 0,
               events_ready: true,
               history_ready: true,
               targets_ready: !options.missingTargets,
+              market_ready: true,
             },
           ]);
         if (sql.startsWith("select (select decrypted_secret")) {

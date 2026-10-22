@@ -45,6 +45,65 @@ async function brandedPage(t, options = {}, makeFixture = fixture) {
   return { f, context, page, chartRequests };
 }
 
+test("cloud browser separates sampled gold warmup, unresolved history and source identity without fabricating earlier trades", async (t) => {
+  const { f, page } = await brandedPage(t, {}, () => cloudFixture(t));
+  const now = new Date().toISOString();
+  Object.assign(f.tables.wg_market_state[0], {
+    enabled: true,
+    last_quote_at: now,
+    last_price: 4100,
+    last_attempt_at: now,
+    reason: "warming_up",
+    progress_minutes: 3,
+  });
+  f.tables.wg_signals.push({
+    id: 99,
+    symbol: "GOLDAPI:XAUUSD",
+    direction: "buy",
+    entry: 4100,
+    stop: 4095,
+    target: 4115,
+    targets: [4105, 4110, 4115],
+    targets_hit: 1,
+    reference_price: 4100,
+    quote_at: now,
+    created_at: now,
+    expires_at: now,
+    opened_at: now,
+    closed_at: now,
+    status: "unresolved",
+    market_strategy: "sampled-m15-8-21-m1-breakout-20-v1",
+    market_resolution: "data_gap",
+    market_observed_at: now,
+    market_observed_price: 4105,
+    risk_reference_pct: 0.5,
+  });
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill("admin@example.test");
+  await page.locator("#loginPassword").fill(CLOUD_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  assert.equal(await page.locator("#marketPanel").isVisible(), true);
+  assert.match(await page.locator("#marketStatus").textContent(), /3 \/ 330/);
+  assert.match(await page.locator("#marketStatus").textContent(), /4,100.00/);
+  assert.match(
+    await page.locator("#currentSignal").textContent(),
+    /GOLDAPI:XAUUSD/,
+  );
+  assert.match(
+    await page.locator("#currentSignal").textContent(),
+    /غير محسومة/,
+  );
+  assert.match(
+    await page.locator("#history").textContent(),
+    /Gold API · آلي تجريبي/,
+  );
+  assert.match(await page.locator("#chartPanel").textContent(), /مصدر مختلف/);
+});
+
 test("production-shaped Vercel HTTPS browser login uses the real Supabase handler, secure cookies and account isolation", async (t) => {
   const alias = "https://wetagold-browser-test-team.vercel.app";
   const { f, page, context, chartRequests } = await brandedPage(

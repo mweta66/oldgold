@@ -12,6 +12,7 @@ let user = null,
   csrf = "",
   signals = [],
   latestSignal = null,
+  market = null,
   overview = null,
   refreshTask = null,
   refreshAgain = false,
@@ -89,6 +90,7 @@ const statuses = {
   stopped: "وقف",
   expired: "منتهية",
   cancelled: "ملغاة",
+  unresolved: "غير محسومة",
 };
 const transitions = {
   pending: ["open", "expired", "cancelled"],
@@ -297,6 +299,7 @@ async function api(path, { method = "GET", data } = {}) {
           "stopped",
           "expired",
           "cancelled",
+          "unresolved",
         ].includes(row.status) &&
         ["buy", "sell"].includes(row.direction) &&
         [row.entry, row.stop, row.target, row.createdAt].every(Number.isFinite);
@@ -391,6 +394,7 @@ function showServiceUnavailable(err) {
 }
 
 function clearSignals() {
+  $("#marketPanel").hidden = true;
   signals = [];
   latestSignal = null;
   $("#currentSignalTitle").textContent = "الإشارات الحالية";
@@ -465,6 +469,11 @@ function setSession(payload) {
   $("#usersSummary").textContent = "";
   $("#usersPage").textContent = "";
   $("#operationsReport").replaceChildren();
+  market = null;
+  $("#marketPanel").hidden = true;
+  $("#marketStatus").replaceChildren();
+  $("#marketAdminMessage").textContent = "";
+  $("#toggleMarket").disabled = false;
   $("#checkOperations").disabled = false;
   $("#usersTable").replaceChildren();
   $("#auditLog").replaceChildren();
@@ -633,6 +642,33 @@ function signalCard(signal) {
     element("span", `السعر المرجعي عند النشر: ${price(signal.referencePrice)}`),
   );
   wrap.append(head, levels, meta);
+  if (signal.marketStrategy) {
+    wrap.append(
+      element(
+        "p",
+        "إشارة آلية تجريبية · Gold API، وليس سعر وسيط. TP/SL عبور مرصود بين قراءات متقطعة، وليس تنفيذًا أو ربحًا فعليًا.",
+        "small muted",
+      ),
+    );
+    if (signal.observedAt)
+      wrap.append(
+        element(
+          "p",
+          `آخر سعر مرصود: ${price(signal.observedPrice)} · ${date(signal.observedAt)}`,
+          "small",
+        ),
+      );
+    if (signal.status === "unresolved")
+      wrap.append(
+        element(
+          "p",
+          signal.marketResolution === "data_gap"
+            ? "فجوة بيانات: لا يمكن حسم النتيجة أو ترتيب لمس المستويات."
+            : "انتهت مهلة المتابعة دون حسم النتيجة.",
+          "message",
+        ),
+      );
+  }
   if (targets.length > 1) {
     const milestones = element("div", undefined, "target-progress");
     targets.forEach((target, index) =>
@@ -665,8 +701,10 @@ function signalCard(signal) {
     form.dataset.actionKey = key;
     const select = element("select");
     select.setAttribute("aria-label", `تغيير حالة الإشارة ${signal.id}`);
-    const options = transitions[signal.status].filter(
-      (status) => status !== "target" || targets.length === 1,
+    const options = transitions[signal.status].filter((status) =>
+      signal.marketStrategy
+        ? status === "cancelled"
+        : status !== "target" || targets.length === 1,
     );
     if (!options.includes(action.selected)) action.selected = options[0];
     for (const status of options) {
@@ -691,7 +729,12 @@ function signalCard(signal) {
     targetButton.type = "button";
     targetButton.disabled = action.busy;
     targetButton.dataset.targetIndex = String(hit + 1);
-    if (signal.status === "open" && targets.length > 1 && hit < targets.length)
+    if (
+      !signal.marketStrategy &&
+      signal.status === "open" &&
+      targets.length > 1 &&
+      hit < targets.length
+    )
       form.append(targetButton);
     targetButton.addEventListener("click", async () => {
       if (action.busy) return;
@@ -850,6 +893,7 @@ function renderHistory() {
   for (const label of [
     "تاريخ ووقت النشر",
     "الإشارة",
+    "المصدر",
     "الحالة",
     "الاتجاه",
     "الدخول",
@@ -871,12 +915,23 @@ function renderHistory() {
       statuses[signal.status],
       `badge ${signal.status}`,
     );
-    const closed = ["target", "stopped", "cancelled", "expired"].includes(
-      signal.status,
-    );
+    const closed = [
+      "target",
+      "stopped",
+      "cancelled",
+      "expired",
+      "unresolved",
+    ].includes(signal.status);
     const cells = [
       ["النشر", stamp(signal.createdAt)],
       ["رقم الإشارة", element("strong", `#${signal.id}`)],
+      [
+        "المصدر",
+        element(
+          "span",
+          signal.marketStrategy ? "Gold API · آلي تجريبي" : signal.symbol,
+        ),
+      ],
       ["الحالة", state],
       [
         "الاتجاه",
@@ -1145,6 +1200,72 @@ function renderAdmin() {
   );
 }
 
+function renderMarket() {
+  const visible = Boolean(market && user && active());
+  $("#marketPanel").hidden = !visible;
+  if (!visible) return;
+  const labels = {
+    warming_up: "تجميع القراءات وتهيئة التحليل",
+    awaiting_fresh_quote: "انتظار سعر حديث؛ الإشارات الجديدة متوقفة",
+    no_setup: "المتابعة تعمل؛ لا توجد فرصة مطابقة للقواعد الآن",
+    active_position: "توجد صفقة قيد المتابعة",
+    paused: "النشر متوقف من الإعداد العام",
+    disabled: "الإشارات الآلية متوقفة من المدير",
+    cooldown: "فترة انتظار بعد إغلاق المتابعة",
+    risk_halted: "توقف النشر: استُهلكت ميزانية الخسارة المرجعية",
+    ready: "التحليل جاهز",
+  };
+  $("#marketStatus").replaceChildren(
+    element(
+      "p",
+      `${market.sourceName} · ${market.enabled ? "النشر الآلي مفعّل" : "النشر الآلي غير مفعّل"}`,
+    ),
+    element("p", labels[market.reason] || "جارٍ فحص المصدر", "message"),
+    element(
+      "p",
+      market.fresh && Number.isFinite(market.price)
+        ? `آخر سعر مرجعي: ${price(market.price)} USD/oz · ${date(market.asOf)}`
+        : `لا يوجد سعر حديث متحقق. آخر قراءة: ${date(market.asOf)}`,
+    ),
+    element(
+      "p",
+      `قراءات الدقائق المتصلة: ${market.progressMinutes} / ${market.requiredMinutes}. الإشارة لا تصدر إلا بعد اكتمال التهيئة ومطابقة القواعد.`,
+      "small",
+    ),
+    element(
+      "p",
+      `المخاطرة المرجعية للإشارة: ${market.riskPerSignal}% · الميزانية المستخدمة ${Number(market.lossBudgetUsed).toFixed(2)} / ${market.lossBudgetLimit}%. ليست نتائج حساب وسيط.`,
+      "small muted",
+    ),
+  );
+  $("#toggleMarket").textContent = market.enabled
+    ? "إيقاف الإشارات الآلية الجديدة"
+    : "تفعيل الإشارات الآلية الجديدة";
+}
+
+$("#toggleMarket").addEventListener("click", async () => {
+  if (user?.role !== "admin" || $("#toggleMarket").disabled) return;
+  const version = generation;
+  $("#toggleMarket").disabled = true;
+  try {
+    const result = await api(
+      "/api/admin/market",
+      market ? { method: "PATCH", data: { enabled: !market.enabled } } : {},
+    );
+    if (version !== generation) return;
+    market = result;
+    renderMarket();
+    message(
+      "#marketAdminMessage",
+      "تم حفظ حالة المحرك. التهيئة وشروط الإشارة تظل مطلوبة.",
+    );
+  } catch (err) {
+    if (version === generation) message("#marketAdminMessage", err.message);
+  } finally {
+    if (version === generation) $("#toggleMarket").disabled = false;
+  }
+});
+
 function refresh() {
   if (!user) return Promise.resolve();
   if (refreshTask) {
@@ -1184,6 +1305,8 @@ async function refreshOnce() {
       user = result.user;
       signals = result.signals;
       latestSignal = result.latestSignal ?? null;
+      market = result.market ?? null;
+      renderMarket();
       renderAccount();
       renderSignals();
       historyResult = await loadHistory();

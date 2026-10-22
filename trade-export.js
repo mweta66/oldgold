@@ -34,6 +34,11 @@ export function historyCsv(signals, timeZone) {
       "TP2",
       "TP3",
       "Targets recorded as reached (not executions)",
+      "Experimental strategy",
+      "Resolution / observation basis",
+      "Last observed reference UTC (not fill)",
+      "Last observed reference price",
+      "Reference risk % (not broker risk control)",
     ],
   ];
   for (const signal of signals)
@@ -52,6 +57,11 @@ export function historyCsv(signals, timeZone) {
       local(signal.createdAt),
       ...(signal.targets || [signal.target]).concat(["", "", ""]).slice(0, 3),
       signal.targetsHit ?? (signal.status === "target" ? 1 : 0),
+      signal.marketStrategy || "",
+      signal.marketResolution || "manual_record",
+      stamp(signal.observedAt),
+      signal.observedPrice ?? "",
+      signal.riskReferencePct ?? "",
     ]);
   return "\ufeff" + rows.map((row) => row.map(cell).join(",")).join("\r\n");
 }
