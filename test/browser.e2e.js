@@ -45,6 +45,114 @@ async function brandedPage(t, options = {}, makeFixture = fixture) {
   return { f, context, page, chartRequests };
 }
 
+test("administration contact opens the current owner's chat for guests and both account roles, across mobile sizes and themes, even without the API or JavaScript", async (t) => {
+  const { f, page, context } = await brandedPage(t, {}, () => cloudFixture(t));
+  await context.route("https://t.me/weta993", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>Owner chat test boundary</title>",
+    }),
+  );
+  await page.goto(f.origin);
+  const contact = page.getByRole("link", {
+    name: "تواصل مع الإدارة على تيليجرام (يفتح في نافذة جديدة)",
+  });
+  assert.equal(await contact.count(), 1);
+  assert.equal(await contact.getAttribute("href"), "https://t.me/weta993");
+  assert.equal(await contact.getAttribute("referrerpolicy"), "no-referrer");
+  for (const width of [320, 390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    assert.equal(await contact.isVisible(), true);
+    const box = await contact.boundingBox();
+    assert.ok(box.height >= 44 && box.width >= 44);
+    assert.ok(box.x >= 0 && box.x + box.width <= width);
+    assert.ok(box.y >= 0 && box.y + box.height <= 844);
+    assert.equal(
+      await contact.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return el.contains(
+          document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2),
+        );
+      }),
+      true,
+    );
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth,
+      ),
+      false,
+    );
+  }
+  for (const theme of ["gold", "ocean", "emerald", "ivory"]) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.theme = value;
+    }, theme);
+    await contact.hover();
+    const accessibility = await new AxeBuilder({ page })
+      .include("#adminContact")
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+      .analyze();
+    assert.deepEqual(
+      accessibility.violations.map((v) => v.id),
+      [],
+      theme,
+    );
+  }
+  await contact.focus();
+  const [popup] = await Promise.all([
+    page.waitForEvent("popup"),
+    page.keyboard.press("Enter"),
+  ]);
+  await popup.waitForLoadState();
+  assert.equal(popup.url(), "https://t.me/weta993");
+  assert.equal(await popup.evaluate(() => window.opener === null), true);
+  await popup.close();
+  assert.equal(page.url(), f.origin + "/");
+
+  for (const email of ["admin@example.test", "member@example.test"]) {
+    await page.locator("#loginButton").click();
+    await page.locator("#loginEmail").fill(email);
+    await page.locator("#loginPassword").fill(CLOUD_PASSWORD);
+    await page.locator("#submitLogin").click();
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#lastUpdate")
+        .textContent.startsWith("آخر مزامنة:"),
+    );
+    assert.equal(await contact.isVisible(), true, email);
+    assert.equal(await contact.getAttribute("href"), "https://t.me/weta993");
+    await page.locator("#logoutButton").click();
+    await page.waitForSelector("#heroLogin", { state: "visible" });
+  }
+  await context.route("**/api/**", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Service temporarily unavailable" }),
+    }),
+  );
+  await page.reload();
+  await page.waitForSelector("#serviceNotice", { state: "visible" });
+  assert.equal(await contact.isVisible(), true);
+  const noScript = await context.browser().newContext({
+    javaScriptEnabled: false,
+    viewport: { width: 390, height: 844 },
+  });
+  t.after(() => noScript.close());
+  const plainPage = await noScript.newPage();
+  await plainPage.goto(f.origin);
+  assert.equal(await plainPage.locator("#adminContact").isVisible(), true);
+  assert.equal(
+    await plainPage.locator("#adminContact").getAttribute("href"),
+    "https://t.me/weta993",
+  );
+  await mkdir("test-results", { recursive: true });
+  await plainPage.screenshot({
+    path: "test-results/telegram-contact-mobile.png",
+  });
+});
+
 test("cloud browser separates sampled gold warmup, unresolved history and source identity without fabricating earlier trades", async (t) => {
   const { f, page } = await brandedPage(t, {}, () => cloudFixture(t));
   const now = new Date().toISOString();
@@ -389,6 +497,9 @@ test("administrator research is explicitly hypothetical, survives provider failu
   await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
   await page.locator("#submitLogin").click();
   await page.waitForSelector("#bybitResearchButton", { state: "visible" });
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
   assert.equal(calls, 0);
   await page.locator("#bybitResearchButton").click();
   await page.waitForFunction(() =>
