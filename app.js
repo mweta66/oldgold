@@ -1206,6 +1206,9 @@ function renderMarket() {
   if (!visible) return;
   const labels = {
     warming_up: "تجميع القراءات وتهيئة التحليل",
+    history_gap: "نقص في بيانات آخر 5 ساعات؛ المتابعة وجمع القراءات مستمران",
+    recent_gap:
+      "انتظار اكتمال آخر 30 دقيقة بعد انقطاع؛ البيانات السابقة محفوظة",
     awaiting_fresh_quote: "انتظار سعر حديث؛ الإشارات الجديدة متوقفة",
     no_setup: "المتابعة تعمل؛ لا توجد فرصة مطابقة للقواعد الآن",
     active_position: "توجد صفقة قيد المتابعة",
@@ -1229,7 +1232,12 @@ function renderMarket() {
     ),
     element(
       "p",
-      `قراءات الدقائق المتصلة: ${market.progressMinutes} / ${market.requiredMinutes}. الإشارة لا تصدر إلا بعد اكتمال التهيئة ومطابقة القواعد.`,
+      `فحص آخر 5 ساعات متحركة: ${market.progressMinutes} / ${market.requiredMinutes} دقيقة مرصودة (الحد الأدنى ${market.minimumObservedMinutes ?? 295}). لا تُملأ الدقائق المفقودة ولا يبدأ التجميع من الصفر بعد انقطاع قصير.`,
+      "small",
+    ),
+    element(
+      "p",
+      `الجزء الحديث: ${market.recentObservedMinutes ?? 0} / ${market.recentRequiredMinutes ?? 30} دقيقة؛ أكبر فاصل حديث ${market.recentMaxGapSeconds ?? 0} ثانية (الحد 90). تهيئة اتجاه M15: ${market.trendBars ?? 0} شمعة مكتملة (الحد الأدنى ${market.requiredTrendBars ?? 21})، من سجل محفوظ حتى 8 ساعات. الإشارة تتطلب سلامة البيانات ومطابقة القواعد.`,
       "small",
     ),
     element(
