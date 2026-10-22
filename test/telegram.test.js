@@ -133,6 +133,17 @@ test("three targets each deliver their own ordered snapshot to the verified grou
       .filter((row) => row.chat_id === chat)
       .map((row) => row.text);
     assert.equal(texts.length, 5);
+    if (chat === "-1001") {
+      assert.match(texts[0], /^شراء\nوقت الإصدار \(مصر\):/);
+      for (let n = 1; n <= 3; n++)
+        assert.match(texts[n + 1], new RegExp(`^شراء — تحديث TP${n}\\n`));
+      assert.doesNotMatch(texts[2], /TP2: 102\.00 ✓/);
+      assert.match(texts[4], /TP3: 103\.00 ✓/);
+      assert.ok(
+        texts.every((text) => !/UTC|المصدر|مرجع التحديث|WetaGold/.test(text)),
+      );
+      continue;
+    }
     for (let n = 1; n <= 3; n++)
       assert.match(texts[n + 1], new RegExp(`تسجيل تحقق TP${n}`));
     assert.doesNotMatch(texts[2], /TP2: 102 — مسجّل/);
@@ -210,7 +221,11 @@ test("bot linking uses a one-time private-chat token and publishing queues real 
   await f.request("/api/admin/signals", { method: "POST", auth: admin, data });
   await f.app.telegram.flush();
   assert.deepEqual(sent.map((row) => row.chat_id).sort(), ["-1001", "123"]);
-  assert.match(sent[0].text, /OANDA:XAUUSD/);
+  assert.match(sent.find((row) => row.chat_id === "123").text, /OANDA:XAUUSD/);
+  assert.match(
+    sent.find((row) => row.chat_id === "-1001").text,
+    /^شراء\nوقت الإصدار \(مصر\):/,
+  );
   await f.request("/api/admin/signals", { method: "POST", auth: admin, data });
   await f.app.telegram.flush();
   assert.equal(sent.length, 2);
