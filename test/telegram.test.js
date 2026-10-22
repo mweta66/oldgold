@@ -134,7 +134,7 @@ test("three targets each deliver their own ordered snapshot to the verified grou
       .map((row) => row.text);
     assert.equal(texts.length, 5);
     if (chat === "-1001") {
-      assert.match(texts[0], /^شراء\nوقت الإصدار \(مصر\):/);
+      assert.match(texts[0], /^شراء\nالدخول:/);
       for (let n = 1; n <= 3; n++)
         assert.match(texts[n + 1], new RegExp(`^شراء — تحديث TP${n}\\n`));
       assert.doesNotMatch(texts[2], /TP2: 102\.00 ✓/);
@@ -224,7 +224,7 @@ test("bot linking uses a one-time private-chat token and publishing queues real 
   assert.match(sent.find((row) => row.chat_id === "123").text, /OANDA:XAUUSD/);
   assert.match(
     sent.find((row) => row.chat_id === "-1001").text,
-    /^شراء\nوقت الإصدار \(مصر\):/,
+    /^شراء\nالدخول:/,
   );
   await f.request("/api/admin/signals", { method: "POST", auth: admin, data });
   await f.app.telegram.flush();

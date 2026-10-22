@@ -199,7 +199,10 @@ test("tracking reports only observed thresholds, retains target progress, charge
   assert.equal(status.historicalReplayAvailable, false);
 });
 
-async function database(t, { rolling = true, seedMinutes = 330 } = {}) {
+async function database(
+  t,
+  { rolling = true, seedMinutes = 330, sell = false } = {},
+) {
   const db = new PGlite();
   t.after(() => db.close());
   await db.exec(
@@ -243,18 +246,20 @@ async function database(t, { rolling = true, seedMinutes = 330 } = {}) {
     ).rows[0].value;
   };
   let quoteAt = Date.now();
-  let quotePrice = 4033;
+  let quotePrice = sell ? 4058 : 4033;
   let feedFailure = false;
   let requests = 0;
   const end = Math.floor(quoteAt / MINUTE) * MINUTE;
-  for (const q of quotes(end, seedMinutes + 1).slice(0, -1))
+  for (const q of quotes(end, seedMinutes + 1).slice(0, -1)) {
+    const normalizedPrice = q.price + (330 - seedMinutes) / 10;
     await db.query(
       "insert into wg_market_quotes(quote_at,price) values($1,$2)",
       [
         new Date(q.at + 30000).toISOString(),
-        q.price + (330 - seedMinutes) / 10,
+        sell ? 8091 - normalizedPrice : normalizedPrice,
       ],
     );
+  }
   const worker = createGoldWorker({
     rpc,
     fetchImpl: async () => {
@@ -371,6 +376,64 @@ test("real PostgreSQL market lease, atomic allocation, immutable TP event snapsh
     );
     await db.exec("reset role");
   }
+});
+
+test("a sell emits TP1 then TP2 exactly once at observed thresholds and cannot emit another goal after SL", async (t) => {
+  // Isolated PostgreSQL fixture, not a replay or a publication to the real group.
+  const f = await database(t, { sell: true }),
+    { db } = f;
+  await f.run();
+  const signal = (await db.query("select * from wg_signals")).rows[0];
+  assert.equal(signal.direction, "sell");
+  assert.deepEqual(signal.targets.map(Number), [4053.94, 4049.88, 4045.82]);
+  f.setQuote(4052.899902);
+  await f.run();
+  f.setQuote(4051.600098);
+  await f.run();
+  assert.equal(
+    (await db.query("select targets_hit from wg_signals")).rows[0].targets_hit,
+    1,
+  );
+  f.setQuote(4049.88);
+  await f.run();
+  assert.equal(
+    (await db.query("select targets_hit from wg_signals")).rows[0].targets_hit,
+    2,
+  );
+  assert.equal((await f.run()).duplicate, true);
+  f.setQuote(4062.06);
+  await f.run();
+  f.setQuote(4045);
+  await f.run();
+  const events = (
+    await db.query(
+      "select kind,status,snapshot from wg_signal_events order by id",
+    )
+  ).rows;
+  assert.deepEqual(
+    events.map((e) => e.kind),
+    ["publish", "tp1", "tp2", "status"],
+  );
+  assert.deepEqual(
+    events.map((e) => e.snapshot.targets_hit),
+    [0, 1, 2, 2],
+  );
+  assert.equal(events.at(-1).status, "stopped");
+  const groupQueue = (
+    await db.query(
+      "select e.kind,o.destination from wg_outbox o join wg_signal_events e on e.id=o.event_id where o.user_id is null order by o.id",
+    )
+  ).rows;
+  assert.deepEqual(
+    groupQueue.map((e) => e.kind),
+    ["publish", "tp1", "tp2", "status"],
+  );
+  assert(groupQueue.every((e) => e.destination === "-1001"));
+  assert.equal(
+    (await db.query("select used from wg_profiles where role='member'")).rows[0]
+      .used,
+    1,
+  );
 });
 
 test("market outages close tracking as unresolved without inventing a price, and are returned in private history", async (t) => {

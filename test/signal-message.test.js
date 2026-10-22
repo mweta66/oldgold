@@ -21,12 +21,11 @@ const signal = {
 const compact = (value = signal, event = { kind: "publish" }) =>
   signalMessage(value, event, { compact: true });
 
-test("group publication contains only direction, original Cairo issue time and entry/SL/targets", () => {
+test("group publication contains only direction and entry/SL/targets, without trade times", () => {
   assert.equal(
     compact(),
     [
       "شراء",
-      "وقت الإصدار (مصر): 22/10/2026 05:15:30",
       "الدخول: 4130.00",
       "SL: 4125.00",
       "TP1: 4135.00",
@@ -36,7 +35,7 @@ test("group publication contains only direction, original Cairo issue time and e
   );
   assert.doesNotMatch(
     compact(),
-    /WetaGold|GOLDAPI|OANDA|UTC|Long|Short|مصدر|المخاطرة|صلاحية|مرجع|قراءة|تنفيذ|الحالة:/,
+    /WetaGold|GOLDAPI|OANDA|UTC|Long|Short|مصدر|المخاطرة|صلاحية|مرجع|قراءة|تنفيذ|الحالة:|وقت|توقيت|2026|05:15:30/,
   );
   assert.ok(compact().length < 250);
 });
@@ -52,39 +51,42 @@ test("compact sell supports the legacy single target and stored numeric strings"
   };
   assert.equal(
     compact(value),
-    "بيع\nوقت الإصدار (مصر): 22/10/2026 05:15:30\nالدخول: 4130.00\nSL: 4135.00\nTP: 4125.25",
+    "بيع\nالدخول: 4130.00\nSL: 4135.00\nTP: 4125.25",
   );
 });
 
-test("group times use Africa/Cairo winter and summer offsets, local date rollover and SQLite millisecond timestamps", () => {
-  for (const [at, expected] of [
-    ["2026-01-15T22:30:05Z", "16/01/2026 00:30:05"],
-    ["2026-07-15T22:30:05Z", "16/07/2026 01:30:05"],
-    ["2026-10-22T23:10:00Z", "23/10/2026 02:10:00"],
+test("group format omits stored trade dates in either UTC strings or SQLite millisecond form", () => {
+  for (const at of [
+    "2026-01-15T22:30:05Z",
+    "2026-07-15T22:30:05Z",
+    "2026-10-22T23:10:00Z",
   ]) {
     for (const created_at of [at, Date.parse(at)])
-      assert.equal(
-        compact({ ...signal, created_at }).split("\n")[1],
-        "وقت الإصدار (مصر): " + expected,
-      );
+      assert.equal(compact({ ...signal, created_at }), compact());
   }
 });
 
-test("target notifications are distinguishable, preserve issue time and mark only snapshot progress", () => {
+test("target notifications are distinguishable, omit times and mark only snapshot progress", () => {
   const one = compact(
     { ...signal, targets_hit: 1 },
     { kind: "tp1", created_at: "2026-10-22T04:00:00Z" },
   );
   assert.match(one, /^شراء — تحديث TP1\n/);
-  assert.match(one, /وقت الإصدار \(مصر\): 22\/10\/2026 05:15:30/);
   assert.match(one, /TP1: 4135\.00 ✓/);
-  assert.doesNotMatch(one, /TP2: 4140\.00 ✓|07:00:00|وقت التحديث/);
+  assert.doesNotMatch(one, /TP2: 4140\.00 ✓|2026|07:00:00|وقت|توقيت/);
+  const second = compact(
+    { ...signal, targets_hit: 2 },
+    { kind: "tp2", created_at: "2026-10-22T04:01:00Z" },
+  );
+  assert.match(second, /^شراء — تحديث TP2\nالدخول:/);
+  assert.match(second, /TP2: 4140\.00 ✓/);
+  assert.doesNotMatch(second, /TP3: 4145\.00 ✓|وقت|توقيت/);
   const final = compact(
     { ...signal, targets_hit: 3, status: "target" },
     { kind: "tp3" },
   );
   assert.match(final, /^شراء — تحديث TP3\n/);
-  assert.equal(final.split("\n").length, 7);
+  assert.equal(final.split("\n").length, 6);
   assert.equal((final.match(/✓/g) || []).length, 3);
 });
 
@@ -99,18 +101,18 @@ test("brief lifecycle updates never disguise stops, cancellation or unresolved r
   ]) {
     const message = compact({ ...signal, status }, { kind: "status" });
     assert.equal(message.split("\n")[0], "شراء — " + label);
-    assert.equal(message.split("\n").length, 7);
+    assert.equal(message.split("\n").length, 6);
   }
 });
 
-test("missing or invalid historical issue times are not invented from the delivery/update time", () => {
+test("missing or invalid historical issue times cannot add a time line to group messages", () => {
   for (const created_at of [undefined, null, "", "not-a-date", Infinity, false])
     assert.equal(
       compact(
         { ...signal, created_at },
         { kind: "status", created_at: signal.created_at },
-      ).split("\n")[1],
-      "وقت الإصدار (مصر): غير مسجّل",
+      ),
+      compact(signal, { kind: "status" }),
     );
 });
 
