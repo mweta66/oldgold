@@ -932,15 +932,16 @@ test("Supabase Telegram webhook/job are secret-protected and publishing sends te
     delivery_until: new Date(Date.now() + 60000).toISOString(),
     snapshot: f.tables.wg_signals[0],
   });
+  const published = await f.request("/api/admin/signals", {
+    method: "POST",
+    auth: admin,
+    data: { requestId: crypto.randomUUID() },
+  });
+  assert.equal(published.status, 201);
+  assert.equal(published.body.telegramGroup, "sent");
   assert.equal(
-    (
-      await f.request("/api/admin/signals", {
-        method: "POST",
-        auth: admin,
-        data: { requestId: crypto.randomUUID() },
-      })
-    ).status,
-    201,
+    f.calls.find((c) => c.path.endsWith("/wg_publish")).data.p_admin_chat,
+    "-1001",
   );
   assert.equal(f.sent.length, 2);
   assert.deepEqual(f.sent.map((s) => s.chat_id).sort(), ["-1001", "1001"]);
@@ -965,4 +966,71 @@ test("Supabase Telegram webhook/job are secret-protected and publishing sends te
     ).status,
     200,
   );
+});
+
+test("manual publication reports the group outcome independently of member quotas, without hiding a queued or failed send", async (t) => {
+  for (const scenario of [
+    { state: "pending", expected: "sent" },
+    { state: "pending", retryAfter: 120, expected: "pending" },
+    { state: "processing", expected: "processing" },
+    { state: "failed", expected: "failed" },
+    { state: "cancelled", expected: "cancelled" },
+    { state: "sent", expected: "sent", duplicate: true },
+    { state: null, expected: "not_queued" },
+    { state: null, missingTable: true, expected: "unknown" },
+    { state: null, noBot: true, expected: "not_configured" },
+  ]) {
+    const f = await fixture(t, {
+      TELEGRAM_GROUP_CHAT_ID: "-1001",
+      ...(scenario.noBot ? { TELEGRAM_BOT_TOKEN: "" } : {}),
+    });
+    const admin = await f.login();
+    f.publication.recipients = 0;
+    if (scenario.duplicate) f.publication.duplicate = true;
+    f.tables.wg_profiles[0].telegram_chat_id = "999";
+    f.telegramPolicy.retryAfter = scenario.retryAfter;
+    const stamp = new Date().toISOString();
+    const signal = {
+      id: 1,
+      symbol: "OANDA:XAUUSD",
+      direction: "buy",
+      entry: 4000,
+      stop: 3990,
+      target: 4010,
+      status: "pending",
+      created_at: stamp,
+      expires_at: new Date(Date.now() + 900000).toISOString(),
+    };
+    f.tables.wg_signals.push(signal);
+    f.tables.wg_signal_events.push({
+      id: 1,
+      signal_id: 1,
+      kind: "publish",
+      created_at: stamp,
+      delivery_until: signal.expires_at,
+      snapshot: signal,
+    });
+    if (scenario.state)
+      f.tables.wg_outbox.push({
+        id: 1,
+        signal_id: 1,
+        event_id: 1,
+        destination: "-1001",
+        user_id: null,
+        state: scenario.state,
+        attempts: 0,
+      });
+    if (scenario.missingTable) f.failTable("wg_outbox");
+    const reply = await f.request("/api/admin/signals", {
+      method: "POST",
+      auth: admin,
+      data: { requestId: crypto.randomUUID() },
+    });
+    assert.equal(reply.status, scenario.duplicate ? 200 : 201);
+    assert.equal(reply.body.recipients, 0);
+    assert.equal(reply.body.telegramGroup, scenario.expected);
+    assert.equal(f.sent.length, scenario.state === "pending" ? 1 : 0);
+    assert(!JSON.stringify(reply.body).includes("test-server-secret"));
+    assert(!JSON.stringify(reply.body).includes("-1001"));
+  }
 });

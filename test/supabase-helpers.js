@@ -56,6 +56,7 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
   };
   const calls = [],
     sent = [];
+  const publication = { id: 1, recipients: 1 };
   const userMetadata = new Map();
   const telegramPolicy = { public: false, memberPosting: false };
   let unavailable = false,
@@ -217,7 +218,7 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
             active: data.p_active,
           },
         );
-      if (name === "wg_publish") return json({ id: 1, recipients: 1 });
+      if (name === "wg_publish") return json(publication);
       if (name === "wg_target_hit") return json({ ok: true, duplicate: false });
       if (name === "wg_history") {
         const available = tables.wg_signals.filter(
@@ -357,6 +358,7 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
     tables,
     calls,
     sent,
+    publication,
     telegramPolicy,
     failTable: (name, code = "42P01") => missingTables.set(name, code),
     request,

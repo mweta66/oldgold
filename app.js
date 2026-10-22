@@ -515,6 +515,7 @@ function setSession(payload) {
     "#accessNotice",
     "#globalError",
     "#adminMessage",
+    "#signalPublishMessage",
     "#passwordMessage",
     "#telegramMessage",
     "#botCheckMessage",
@@ -1665,6 +1666,18 @@ function resetUser() {
   $("#cancelEdit").hidden = true;
 }
 $("#cancelEdit").addEventListener("click", resetUser);
+$("#signalForm").addEventListener(
+  "invalid",
+  (event) => {
+    const field = event.target;
+    const label = document.querySelector(`label[for="${field.id}"]`);
+    message(
+      "#signalPublishMessage",
+      `لم تُنشر الإشارة. راجع ${label?.textContent.trim() || "الحقل المطلوب"}: ${field.validationMessage}`,
+    );
+  },
+  true,
+);
 $("#signalForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (publishing) return;
@@ -1672,6 +1685,7 @@ $("#signalForm").addEventListener("submit", async (event) => {
   publishing = true;
   $("#publishButton").disabled = true;
   lockForm("#signalForm");
+  message("#signalPublishMessage", "جارٍ حفظ الإشارة وفحص إرسال الجروب…");
   try {
     if ($("#target3").value && !$("#target2").value)
       throw new Error("أدخل TP2 قبل TP3.");
@@ -1701,14 +1715,32 @@ $("#signalForm").addEventListener("submit", async (event) => {
     if (version !== generation) return;
     $("#signalForm").reset();
     draft = null;
-    notify(
-      result.duplicate
-        ? "الإشارة منشورة بالفعل."
-        : `تم نشر الإشارة لـ ${result.recipients} مشترك.`,
-    );
+    const saved = result.duplicate
+      ? "الإشارة منشورة بالفعل؛ لم تُنشر مرة أخرى."
+      : `تم حفظ الإشارة وتخصيصها لـ ${result.recipients} مشترك.`;
+    const delivery =
+      {
+        sent: "تم إرسال الإشارة إلى جروب تيليجرام.",
+        pending:
+          "إرسال الجروب في الانتظار؛ ستُعاد المحاولة تلقائيًا. لا تعِد نشر الصفقة.",
+        processing: "إرسال الجروب قيد المعالجة. لا تعِد نشر الصفقة.",
+        failed:
+          "تعذر إرسال الجروب بعد المحاولات؛ راجع فحص الجروب ثم أعد محاولة الرسائل الفاشلة، وليس نشر الصفقة.",
+        cancelled: "أُلغي إرسال الجروب؛ راجع صلاحية الإشارة وسجل الإرسال.",
+        not_configured:
+          "لم تُرسل للجروب: ربط بوت تيليجرام أو الجروب غير مكتمل.",
+        not_queued:
+          "لا توجد رسالة نشر مسجلة للجروب؛ راجع ربط الجروب وتشخيص الإدارة.",
+      }[result.telegramGroup] ||
+      "لم يتأكد إرسال الجروب. راجع سجل الإرسال؛ لا تعِد نشر الصفقة.";
+    message("#signalPublishMessage", `${saved} ${delivery}`);
+    notify(saved);
     await refresh();
   } catch (err) {
-    if (version === generation) message("#adminMessage", err.message);
+    if (version === generation) {
+      message("#signalPublishMessage", err.message);
+      $("#signalPublishMessage").scrollIntoView({ block: "center" });
+    }
   } finally {
     if (version === generation) {
       unlockForm("#signalForm");
