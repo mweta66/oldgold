@@ -604,26 +604,27 @@
               </p>
               <div class="two-fields">
                 <div class="field">
-                  <label for="referencePrice">السعر المرجعي المراجَع</label
+                  <label for="referencePrice">السعر المرجعي · اختياري</label
                   ><input
                     id="referencePrice"
                     type="number"
                     min="0.01"
                     step="0.01"
-                    required
                   />
                 </div>
                 <div class="field">
                   <label for="quoteAt" id="quoteTimeLabel"
-                    >وقت السعر · توقيت مصر</label
-                  ><input id="quoteAt" type="datetime-local" required />
+                    >وقت السعر · توقيت مصر · اختياري</label
+                  ><input id="quoteAt" type="datetime-local" />
                 </div>
               </div>
               <p class="small muted">
-                وقت السعر المرجعي لازم يكون خلال آخر خمس دقائق بتوقيت مصر؛ راجع
-                السعر ووقته قبل النشر. صلاحية الإشارة المعلقة 15 دقيقة. تخصم
-                إشارة واحدة من حصة كل مشترك مؤهل عند النشر. إرسال الجروب مستقل
-                عن عدد المشتركين المستحقين.
+                السعر المرجعي ووقت السعر اختياريان؛ تركهما فارغين لا يمنع النشر
+                أو إرسال الجروب. لو أضفت وقت السعر، يكون خلال آخر خمس دقائق
+                بتوقيت مصر. وقت إصدار الإشارة يُسجّل تلقائيًا عند النشر، ولا
+                يُعتبر وقت مراجعة سعر. صلاحية الإشارة المعلقة 15 دقيقة، وتخصم
+                إشارة واحدة من حصة كل مشترك مؤهل. إرسال الجروب مستقل عن عدد
+                المشتركين المستحقين.
               </p>
               <button class="primary-btn" id="publishButton" type="submit">
                 نشر وإرسال للمستحقين

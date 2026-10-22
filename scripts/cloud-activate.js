@@ -28,17 +28,18 @@ const assert = (condition, code) => {
 };
 
 export function migrationBatch(files) {
-  assert(files.length === 6, "MIGRATION_COUNT_INVALID");
+  assert(files.length === 7, "MIGRATION_COUNT_INVALID");
   assert(
     files.every(
       (file, index) =>
-        file.version === ["001", "002", "003", "004", "005", "006"][index],
+        file.version ===
+        ["001", "002", "003", "004", "005", "006", "007"][index],
     ),
     "MIGRATION_ORDER_INVALID",
   );
   const records = [];
   const statements = files.map(({ version, sql }) => {
-    assert(/^00[123456]$/.test(version), "MIGRATION_VERSION_INVALID");
+    assert(/^00[1234567]$/.test(version), "MIGRATION_VERSION_INVALID");
     assert(
       (sql.match(/^begin;[ \t]*$/gm) || []).length === 1 &&
         (sql.match(/^commit;[ \t]*$/gm) || []).length === 1,
@@ -104,6 +105,7 @@ export async function activateCloud(
         ["004", "004_multiple_targets.sql"],
         ["005", "005_gold_market.sql"],
         ["006", "006_rolling_market_window.sql"],
+        ["007", "007_optional_manual_reference.sql"],
       ].map(([version, file]) => ({
         version,
         sql: readFileSync(
@@ -366,14 +368,17 @@ export async function activateCloud(
        (select count(*) from information_schema.columns where table_schema='public' and table_name='wg_signals' and column_name in ('targets','targets_hit'))=2) as targets_ready,
       (to_regprocedure('public.wg_market_commit(uuid,jsonb,jsonb,text)') is not null and
        to_regprocedure('public.wg_market_window(timestamptz)') is not null and
-       exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_market_state' and column_name='analysis')) as market_ready`);
+       exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_market_state' and column_name='analysis')) as market_ready,
+      ((select count(*) from information_schema.columns where table_schema='public' and table_name='wg_signals' and column_name in ('quote_at','reference_price') and is_nullable='YES')=2 and
+       exists(select 1 from pg_constraint where conrelid='public.wg_signals'::regclass and conname='wg_automatic_reference_required')) as manual_reference_ready`);
     assert(
       Number(schema[0]?.private_tables) === requiredTables.length &&
         Number(schema[0]?.browser_readable) === 0 &&
         schema[0]?.events_ready &&
         schema[0]?.history_ready &&
         schema[0]?.targets_ready &&
-        schema[0]?.market_ready,
+        schema[0]?.market_ready &&
+        schema[0]?.manual_reference_ready,
       "SCHEMA_SECURITY_CHECK_FAILED",
     );
     report.schemaReady = true;

@@ -215,6 +215,7 @@ async function database(
     "004_multiple_targets.sql",
     "005_gold_market.sql",
     ...(rolling ? ["006_rolling_market_window.sql"] : []),
+    "007_optional_manual_reference.sql",
   ])
     await db.exec(
       await readFile(

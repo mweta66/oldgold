@@ -73,6 +73,52 @@ function linkOwner(f) {
     .run();
 }
 
+test("manual signal without optional reference fields is sent once to the private group even with zero members", async (t) => {
+  const sent = [];
+  const f = await fixture({
+    env: {
+      TELEGRAM_BOT_TOKEN: "test-only-token",
+      TELEGRAM_GROUP_CHAT_ID: "-1001",
+    },
+    fetchImpl: async (url, options) => {
+      const method = url.split("/").pop(),
+        body = JSON.parse(options.body);
+      const known = privacyResult(method, body);
+      if (known) return Response.json({ ok: true, result: known });
+      assert.equal(method, "sendMessage");
+      sent.push(body);
+      return Response.json({ ok: true, result: { message_id: sent.length } });
+    },
+  });
+  t.after(() => f.app.close());
+  linkOwner(f);
+  const auth = await f.login();
+  const data = f.signal();
+  delete data.referencePrice;
+  delete data.quoteAt;
+  const publish = () =>
+    f.request("/api/admin/signals", { method: "POST", auth, data });
+  const first = await publish();
+  assert.equal(first.status, 201);
+  assert.equal(first.body.recipients, 0);
+  await f.app.telegram.flush();
+  assert.equal((await publish()).body.duplicate, true);
+  await f.app.telegram.flush();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].chat_id, "-1001");
+  assert.match(
+    sent[0].text,
+    /^شراء\nالدخول: 100\.00\nSL: 99\.00\nTP: 101\.50$/,
+  );
+  const stored = f.app.db.prepare("select * from signals").get();
+  assert.equal(stored.reference_price, null);
+  assert.equal(stored.quote_at, null);
+  assert.equal(
+    f.app.db.prepare("select state from outbox").get().state,
+    "sent",
+  );
+});
+
 test("three targets each deliver their own ordered snapshot to the verified group and allocated member without duplicate quota or notifications", async (t) => {
   const sent = [];
   const f = await fixture({

@@ -584,6 +584,78 @@ test("mobile manual publication keeps rejected input and shows persistent, separ
   assert.equal(await feedback.textContent(), "");
 });
 
+test("mobile admin publishes with either or both reference inputs blank and never turns missing values into zero or fake quote times", async (t) => {
+  const { f, page } = await brandedPage(t, {
+    viewport: { width: 390, height: 844 },
+  });
+  await page.goto(f.origin);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
+  assert.equal(
+    await page.locator("#referencePrice").getAttribute("required"),
+    null,
+  );
+  assert.equal(await page.locator("#quoteAt").getAttribute("required"), null);
+  for (const id of ["entry", "stop", "target"])
+    assert.notEqual(
+      await page.locator(`#${id}`).getAttribute("required"),
+      null,
+    );
+  const auth = await f.login();
+  for (const [hasPrice, hasTime] of [
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ]) {
+    for (const [id, value] of [
+      ["entry", "4000"],
+      ["stop", "3990"],
+      ["target", "4010"],
+    ])
+      await page.locator(`#${id}`).fill(value);
+    if (hasPrice) await page.locator("#referencePrice").fill("4000");
+    if (hasTime)
+      await page.locator("#quoteAt").fill(localInput(f.now(), EGYPT_ZONE));
+    const waiting = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === "/api/admin/signals" &&
+        r.request().method() === "POST",
+    );
+    await page.locator("#publishButton").click();
+    const response = await waiting;
+    assert.equal(response.status(), 201);
+    const sent = response.request().postDataJSON();
+    assert.equal(Object.hasOwn(sent, "referencePrice"), hasPrice);
+    assert.equal(Object.hasOwn(sent, "quoteAt"), hasTime);
+    const result = await response.json();
+    await page.waitForFunction(
+      () => !document.querySelector("#publishButton").disabled,
+    );
+    const row = f.app.db
+      .prepare("select * from signals where id=?")
+      .get(result.id);
+    assert.equal(row.reference_price, hasPrice ? 4000 : null);
+    if (!hasTime) assert.equal(row.quote_at, null);
+    assert.equal(row.created_at, f.now());
+    if (!hasPrice)
+      assert.match(
+        await page.locator("#currentSignal").textContent(),
+        /السعر المرجعي عند النشر: غير مضاف/,
+      );
+    await f.request(`/api/admin/signals/${result.id}`, {
+      method: "PATCH",
+      auth,
+      data: { status: "cancelled" },
+    });
+  }
+});
+
 test("manual publication explains native browser field validation before any request", async (t) => {
   const { f, page } = await brandedPage(t, {
     viewport: { width: 390, height: 844 },

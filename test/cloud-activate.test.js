@@ -40,6 +40,7 @@ const files = () =>
     "004_multiple_targets.sql",
     "005_gold_market.sql",
     "006_rolling_market_window.sql",
+    "007_optional_manual_reference.sql",
   ].map((name) => ({
     version: name.slice(0, 3),
     sql: readFileSync(
@@ -98,6 +99,7 @@ function fixture(options = {}) {
               history_ready: true,
               targets_ready: !options.missingTargets,
               market_ready: !options.missingRollingWindow,
+              manual_reference_ready: !options.missingOptionalReference,
             },
           ]);
         if (sql.startsWith("select (select decrypted_secret")) {
@@ -365,6 +367,22 @@ test("an existing schema without target migration is rejected before deployment,
 
 test("activation refuses to deploy the rolling worker over a database that still lacks migration 006", async () => {
   const f = fixture({ missingRollingWindow: true });
+  const result = await f.run();
+  assert.equal(result.error, "SCHEMA_SECURITY_CHECK_FAILED");
+  assert.equal(result.schemaReady, false);
+  assert(
+    !f.calls.some(
+      (c) =>
+        c.url.pathname.endsWith("/deployments") ||
+        c.url.pathname.endsWith("/env") ||
+        (c.url.pathname.endsWith("/database/query") &&
+          c.body.read_only === false),
+    ),
+  );
+});
+
+test("activation refuses to deploy optional-reference forms over a database without migration 007", async () => {
+  const f = fixture({ missingOptionalReference: true });
   const result = await f.run();
   assert.equal(result.error, "SCHEMA_SECURITY_CHECK_FAILED");
   assert.equal(result.schemaReady, false);
