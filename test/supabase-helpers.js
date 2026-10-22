@@ -43,6 +43,16 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
     wg_audit: [],
     wg_settings: [{ id: 1, theme: "gold", paused: false }],
     wg_telegram_links: [],
+    wg_market_state: [
+      {
+        id: 1,
+        enabled: false,
+        reason: "warming_up",
+        progress_minutes: 0,
+        loss_used: 0,
+      },
+    ],
+    wg_market_quotes: [],
   };
   const calls = [],
     sent = [];
@@ -196,6 +206,8 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
       const name = url.pathname.split("/").pop();
       if (name === "wg_settings_update")
         Object.assign(tables.wg_settings[0], data.p_data);
+      if (name === "wg_market_config")
+        tables.wg_market_state[0].enabled = data.p_enabled;
       if (name === "wg_member_update")
         Object.assign(
           tables.wg_profiles.find((p) => p.id === data.p_id),

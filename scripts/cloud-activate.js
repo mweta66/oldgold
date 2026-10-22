@@ -16,6 +16,8 @@ const requiredTables = [
   "wg_outbox",
   "wg_audit",
   "wg_signal_events",
+  "wg_market_state",
+  "wg_market_quotes",
 ];
 const sqlString = (value) => `'${value.replaceAll("'", "''")}'`;
 const fail = (code) => {
@@ -26,16 +28,17 @@ const assert = (condition, code) => {
 };
 
 export function migrationBatch(files) {
-  assert(files.length === 4, "MIGRATION_COUNT_INVALID");
+  assert(files.length === 5, "MIGRATION_COUNT_INVALID");
   assert(
     files.every(
-      (file, index) => file.version === ["001", "002", "003", "004"][index],
+      (file, index) =>
+        file.version === ["001", "002", "003", "004", "005"][index],
     ),
     "MIGRATION_ORDER_INVALID",
   );
   const records = [];
   const statements = files.map(({ version, sql }) => {
-    assert(/^00[1234]$/.test(version), "MIGRATION_VERSION_INVALID");
+    assert(/^00[12345]$/.test(version), "MIGRATION_VERSION_INVALID");
     assert(
       (sql.match(/^begin;[ \t]*$/gm) || []).length === 1 &&
         (sql.match(/^commit;[ \t]*$/gm) || []).length === 1,
@@ -99,6 +102,7 @@ export async function activateCloud(
         ["002", "002_trade_history.sql"],
         ["003", "003_telegram_events.sql"],
         ["004", "004_multiple_targets.sql"],
+        ["005", "005_gold_market.sql"],
       ].map(([version, file]) => ({
         version,
         sql: readFileSync(
@@ -358,13 +362,15 @@ export async function activateCloud(
       to_regprocedure('public.wg_signal_status(uuid,bigint,text,text)') is not null as events_ready,
       to_regprocedure('public.wg_history(uuid,integer,text,text,timestamptz,timestamptz)') is not null as history_ready,
       (to_regprocedure('public.wg_target_hit(uuid,bigint,integer,text)') is not null and
-       (select count(*) from information_schema.columns where table_schema='public' and table_name='wg_signals' and column_name in ('targets','targets_hit'))=2) as targets_ready`);
+       (select count(*) from information_schema.columns where table_schema='public' and table_name='wg_signals' and column_name in ('targets','targets_hit'))=2) as targets_ready,
+      to_regprocedure('public.wg_market_commit(uuid,jsonb,jsonb,text)') is not null as market_ready`);
     assert(
       Number(schema[0]?.private_tables) === requiredTables.length &&
         Number(schema[0]?.browser_readable) === 0 &&
         schema[0]?.events_ready &&
         schema[0]?.history_ready &&
-        schema[0]?.targets_ready,
+        schema[0]?.targets_ready &&
+        schema[0]?.market_ready,
       "SCHEMA_SECURITY_CHECK_FAILED",
     );
     report.schemaReady = true;

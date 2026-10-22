@@ -135,7 +135,7 @@
           <div>
             <p class="eyebrow">MEMBER WORKSPACE</p>
             <h1 class="page-title">لوحة الإشارات</h1>
-            <p class="muted">OANDA:XAUUSD · اتجاه 15 دقيقة / دخول الدقيقة</p>
+            <p class="muted">ذهب / دولار · إشارات من قراءات M1 واتجاه M15</p>
           </div>
           <div class="refresh-tools">
             <span id="lastUpdate" class="muted small">لم يتم التحديث</span
@@ -164,6 +164,15 @@
           </article>
         </div>
         <p id="accessNotice" class="message" hidden></p>
+        <article id="marketPanel" class="panel" hidden>
+          <h2>متابعة السوق الآلية</h2>
+          <div id="marketStatus" role="status"></div>
+          <p class="small muted">
+            Gold API · قراءات سعر مرجعي كل نحو 30 ثانية، وليست شموع وسيط أو سعر
+            تنفيذ. الإشارات تجريبية وقد تفوت حركة بين القراءات. لا توجد صفقات
+            تاريخية مصطنعة ولا ضمان أرباح أو حد خسارة فعلي.
+          </p>
+        </article>
         <div class="workspace-grid" id="signalWorkspace">
           <article class="panel">
             <div class="panel-head">
@@ -200,8 +209,9 @@
           </div>
           <p class="muted small">
             ده سجل الإشارات المنشورة ونتائجها المسجّلة، مش سجل تنفيذ مستورد من
-            MT5 أو Bybit. وقت الفتح والإغلاق حسب تسجيل المدير؛ التاريخ القديم
-            غير المتاح يظهر «غير مسجّل».
+            MT5 أو Bybit. الإشارات الآلية تسجل أوقات نشرها ورصدها فعليًا،
+            والإشارات اليدوية حسب تسجيل المدير؛ التاريخ القديم غير المتاح يظهر
+            «غير مسجّل».
           </p>
           <form id="historyForm" class="history-filters">
             <div class="field">
@@ -214,6 +224,7 @@
                 <option value="stopped">وقف</option>
                 <option value="expired">منتهية</option>
                 <option value="cancelled">ملغاة</option>
+                <option value="unresolved">غير محسومة</option>
               </select>
             </div>
             <div class="field">
@@ -385,7 +396,10 @@
           <div class="panel-head">
             <div>
               <h3>شارت الذهب · خاص بالمدير</h3>
-              <span class="muted small">TradingView · OANDA:XAUUSD</span>
+              <span class="muted small"
+                >TradingView · OANDA:XAUUSD · مصدر مختلف عن Gold API، وليس مرجع
+                متابعة الإشارات الآلية</span
+              >
             </div>
             <div class="chart-actions">
               <div class="timeframes" aria-label="فريم الشارت" dir="ltr">
@@ -636,6 +650,21 @@
               التالي
             </button>
           </div>
+        </article>
+        <article class="panel">
+          <div class="panel-head">
+            <h3>محرك إشارات الذهب</h3>
+            <button id="toggleMarket" class="secondary-btn" type="button">
+              فحص حالة المحرك
+            </button>
+          </div>
+          <p class="small muted">
+            إيقاف المحرك يمنع الإشارات الجديدة فقط؛ تظل متابعة الصفقات المفتوحة
+            وجمع القراءات مستمرين. ميزانية خسارة مرجعية 10%، و0.5% للإشارة،
+            وليست تحكمًا في حساب وسيطك. التهيئة 330 دقيقة متصلة. الإعداد العام
+            «إيقاف النشر» يمنع النشر الآلي أيضًا.
+          </p>
+          <p id="marketAdminMessage" role="status" class="small"></p>
         </article>
         <article class="panel">
           <div class="panel-head">
