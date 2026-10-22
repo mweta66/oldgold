@@ -195,7 +195,11 @@ test("cloud browser separates sampled gold warmup, unresolved history and source
     document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
   );
   assert.equal(await page.locator("#marketPanel").isVisible(), true);
-  assert.match(await page.locator("#marketStatus").textContent(), /3 \/ 330/);
+  assert.match(await page.locator("#marketStatus").textContent(), /3 \/ 300/);
+  assert.match(
+    await page.locator("#marketStatus").textContent(),
+    /آخر 5 ساعات متحركة/,
+  );
   assert.match(await page.locator("#marketStatus").textContent(), /4,100.00/);
   assert.match(
     await page.locator("#currentSignal").textContent(),
@@ -210,6 +214,45 @@ test("cloud browser separates sampled gold warmup, unresolved history and source
     /Gold API · آلي تجريبي/,
   );
   assert.match(await page.locator("#chartPanel").textContent(), /مصدر مختلف/);
+  Object.assign(f.tables.wg_market_state[0], {
+    reason: "recent_gap",
+    progress_minutes: 299,
+    analysis: {
+      observed: 299,
+      recent: 29,
+      recentMaxGapMs: 120000,
+      trendBars: 30,
+    },
+  });
+  await page.locator("#refreshButton").click();
+  await page.waitForFunction(
+    () => !document.querySelector("#refreshButton").disabled,
+  );
+  assert.match(await page.locator("#marketStatus").textContent(), /299 \/ 300/);
+  assert.match(await page.locator("#marketStatus").textContent(), /29 \/ 30/);
+  assert.match(await page.locator("#marketStatus").textContent(), /120 ثانية/);
+  assert.match(
+    await page.locator("#marketStatus").textContent(),
+    /البيانات السابقة محفوظة/,
+  );
+  Object.assign(f.tables.wg_market_state[0], {
+    reason: "no_setup",
+    analysis: {
+      observed: 299,
+      recent: 30,
+      recentMaxGapMs: 30000,
+      trendBars: 30,
+    },
+  });
+  await page.locator("#refreshButton").click();
+  await page.waitForFunction(
+    () => !document.querySelector("#refreshButton").disabled,
+  );
+  assert.match(
+    await page.locator("#marketStatus").textContent(),
+    /لا توجد فرصة مطابقة/,
+  );
+  assert.match(await page.locator("#marketStatus").textContent(), /299 \/ 300/);
 });
 
 test("production-shaped Vercel HTTPS browser login uses the real Supabase handler, secure cookies and account isolation", async (t) => {

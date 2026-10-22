@@ -28,17 +28,17 @@ const assert = (condition, code) => {
 };
 
 export function migrationBatch(files) {
-  assert(files.length === 5, "MIGRATION_COUNT_INVALID");
+  assert(files.length === 6, "MIGRATION_COUNT_INVALID");
   assert(
     files.every(
       (file, index) =>
-        file.version === ["001", "002", "003", "004", "005"][index],
+        file.version === ["001", "002", "003", "004", "005", "006"][index],
     ),
     "MIGRATION_ORDER_INVALID",
   );
   const records = [];
   const statements = files.map(({ version, sql }) => {
-    assert(/^00[12345]$/.test(version), "MIGRATION_VERSION_INVALID");
+    assert(/^00[123456]$/.test(version), "MIGRATION_VERSION_INVALID");
     assert(
       (sql.match(/^begin;[ \t]*$/gm) || []).length === 1 &&
         (sql.match(/^commit;[ \t]*$/gm) || []).length === 1,
@@ -103,6 +103,7 @@ export async function activateCloud(
         ["003", "003_telegram_events.sql"],
         ["004", "004_multiple_targets.sql"],
         ["005", "005_gold_market.sql"],
+        ["006", "006_rolling_market_window.sql"],
       ].map(([version, file]) => ({
         version,
         sql: readFileSync(
@@ -363,7 +364,9 @@ export async function activateCloud(
       to_regprocedure('public.wg_history(uuid,integer,text,text,timestamptz,timestamptz)') is not null as history_ready,
       (to_regprocedure('public.wg_target_hit(uuid,bigint,integer,text)') is not null and
        (select count(*) from information_schema.columns where table_schema='public' and table_name='wg_signals' and column_name in ('targets','targets_hit'))=2) as targets_ready,
-      to_regprocedure('public.wg_market_commit(uuid,jsonb,jsonb,text)') is not null as market_ready`);
+      (to_regprocedure('public.wg_market_commit(uuid,jsonb,jsonb,text)') is not null and
+       to_regprocedure('public.wg_market_window(timestamptz)') is not null and
+       exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_market_state' and column_name='analysis')) as market_ready`);
     assert(
       Number(schema[0]?.private_tables) === requiredTables.length &&
         Number(schema[0]?.browser_readable) === 0 &&

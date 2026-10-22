@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import {
   createGoldMarket,
+  GOLD_STRATEGY,
   parseGoldQuote,
   sampledCloses,
   goldDecision,
@@ -71,15 +72,18 @@ test("Gold API adapter uses only its public reference endpoint, validates identi
     );
 });
 
-test("sampled strategy has no invented OHLC, missing-minute fill or future influence, and requires 330 actual completed minutes", () => {
+test("rolling five-hour strategy preserves real history across a short outage without filling missing minutes or future influence", () => {
   const end = Date.UTC(2026, 9, 21, 18, 0);
   const history = quotes(end);
   assert.equal(
-    goldDecision(history.slice(-330), history.at(-1)).reason,
+    goldDecision(history.slice(-300), history.at(-1)).reason,
     "warming_up",
   );
   const result = goldDecision(history, history.at(-1));
-  assert.equal(result.progress, 330);
+  assert.equal(result.progress, 300);
+  assert.equal(result.window.observed, 300);
+  assert.equal(result.window.recent, 30);
+  assert(result.window.trendBars >= 21);
   assert.equal(result.decision.direction, "buy");
   assert.equal(result.decision.at, end);
   assert(result.decision.stop < result.decision.entry);
@@ -88,16 +92,17 @@ test("sampled strategy has no invented OHLC, missing-minute fill or future influ
     goldDecision([...history, { at: end + 3600000, price: 1 }], history.at(-1)),
     result,
   );
-  assert.equal(
-    goldDecision(
-      history.filter((_, i) => i !== 200),
-      history.at(-1),
-    ).reason,
-    "warming_up",
+  const recovered = goldDecision(
+    history.filter((_, i) => i !== 200),
+    history.at(-1),
   );
+  assert.equal(recovered.reason, "ready");
+  assert.equal(recovered.progress, 299);
+  assert.equal(recovered.window.maxGapMs, 120000);
+  assert.equal(recovered.decision.direction, "buy");
   const thirtySecondHole = history.map((q) => ({ ...q }));
   thirtySecondHole[200].at -= 31000;
-  assert(goldDecision(thirtySecondHole, history.at(-1)).progress < 330);
+  assert.equal(goldDecision(thirtySecondHole, history.at(-1)).progress, 299);
   assert.deepEqual(Object.keys(sampledCloses(history, end)[0]), [
     "time",
     "price",
@@ -105,6 +110,46 @@ test("sampled strategy has no invented OHLC, missing-minute fill or future influ
   assert.equal(
     sampledCloses([{ at: end - 30000, price: 4100 }], end).length,
     1,
+  );
+});
+
+test("rolling coverage is clock-aligned, ignores gaps outside its window, and blocks incomplete recent or excessively gapped history", () => {
+  const end = Date.UTC(2026, 9, 21, 18, 0);
+  const history = quotes(end, 481);
+  const evaluate = (exclude) =>
+    goldDecision(
+      history.filter((q, i) => !exclude(i)),
+      history.at(-1),
+    );
+  assert.equal(evaluate((i) => i === 475).reason, "recent_gap");
+  assert.equal(evaluate((i) => i >= 300 && i < 303).reason, "history_gap");
+  assert.equal(
+    evaluate((i) => [200, 230, 260, 290, 320, 350].includes(i)).reason,
+    "history_gap",
+  );
+  const outsideWindow = evaluate((i) => i === 100);
+  assert.equal(outsideWindow.progress, 300);
+  assert.equal(outsideWindow.window.maxGapMs, MINUTE);
+  assert(outsideWindow.decision);
+  for (const offset of [0, 1, 30, 44, 59]) {
+    const at = end + offset * MINUTE;
+    const h = quotes(at, 481);
+    const decision = goldDecision(h, h.at(-1));
+    assert.equal(decision.progress, 300);
+    assert.equal(decision.decision.at, at);
+  }
+  const reversed = history.map((q) => ({ ...q, price: 9000 - q.price }));
+  assert.equal(
+    goldDecision(reversed, reversed.at(-1)).decision.direction,
+    "sell",
+  );
+  assert.equal(
+    goldDecision(history, { ...history.at(-1), price: 1 }).reason,
+    "no_setup",
+  );
+  assert.throws(
+    () => goldDecision([history[1], history[0]], history.at(-1)),
+    /./,
   );
 });
 
@@ -154,7 +199,7 @@ test("tracking reports only observed thresholds, retains target progress, charge
   assert.equal(status.historicalReplayAvailable, false);
 });
 
-async function database(t) {
+async function database(t, { rolling = true, seedMinutes = 330 } = {}) {
   const db = new PGlite();
   t.after(() => db.close());
   await db.exec(
@@ -166,6 +211,7 @@ async function database(t) {
     "003_telegram_events.sql",
     "004_multiple_targets.sql",
     "005_gold_market.sql",
+    ...(rolling ? ["006_rolling_market_window.sql"] : []),
   ])
     await db.exec(
       await readFile(
@@ -201,10 +247,13 @@ async function database(t) {
   let feedFailure = false;
   let requests = 0;
   const end = Math.floor(quoteAt / MINUTE) * MINUTE;
-  for (const q of quotes(end).slice(0, -1))
+  for (const q of quotes(end, seedMinutes + 1).slice(0, -1))
     await db.query(
       "insert into wg_market_quotes(quote_at,price) values($1,$2)",
-      [new Date(q.at + 30000).toISOString(), q.price],
+      [
+        new Date(q.at + 30000).toISOString(),
+        q.price + (330 - seedMinutes) / 10,
+      ],
     );
   const worker = createGoldWorker({
     rpc,
@@ -228,12 +277,15 @@ async function database(t) {
     get requests() {
       return requests;
     },
+    get quote() {
+      return { at: quoteAt, price: quotePrice };
+    },
     setQuote(price, advance = 500) {
       quotePrice = price;
       quoteAt += advance;
     },
-    failFeed() {
-      feedFailure = true;
+    failFeed(value = true) {
+      feedFailure = value;
     },
   };
 }
@@ -245,6 +297,7 @@ test("real PostgreSQL market lease, atomic allocation, immutable TP event snapsh
   assert.equal(first.recipients, 1, JSON.stringify(first));
   let s = (await db.query("select * from wg_signals")).rows[0];
   assert.equal(s.symbol, "GOLDAPI:XAUUSD");
+  assert.equal(s.market_strategy, GOLD_STRATEGY.id);
   assert.equal(s.status, "open");
   assert.equal(Number(s.risk_reference_pct), 0.5);
   assert.equal(
@@ -338,6 +391,7 @@ test("market outages close tracking as unresolved without inventing a price, and
   assert(s.closed_at);
   const m = (await db.query("select * from wg_market_state")).rows[0];
   assert.equal(m.lease, null);
+  assert.equal(m.progress_minutes, 300);
   assert.equal(Number(m.loss_used), 0.5);
   const history = (
     await db.query("select wg_history($1,1,'unresolved') as data", [f.member])
@@ -348,6 +402,197 @@ test("market outages close tracking as unresolved without inventing a price, and
   assert.equal(
     (await db.query("select count(*)::int as n from wg_signal_events")).rows[0]
       .n,
+    2,
+  );
+});
+
+test("a transient outage and duplicate recovery retain rolling coverage without duplicate entries or quota consumption", async (t) => {
+  const f = await database(t),
+    { db } = f;
+  await f.run();
+  const before = (await db.query("select * from wg_market_state")).rows[0];
+  f.failFeed();
+  await assert.rejects(f.run(), (e) => e.code === "GOLD_UNREACHABLE");
+  const failed = (await db.query("select * from wg_market_state")).rows[0];
+  assert.equal(failed.progress_minutes, before.progress_minutes);
+  assert.deepEqual(failed.analysis, before.analysis);
+  assert.equal(failed.reason, "awaiting_fresh_quote");
+  f.failFeed(false);
+  assert.equal((await f.run()).duplicate, true);
+  const recovered = (await db.query("select * from wg_market_state")).rows[0];
+  assert.equal(recovered.last_error, null);
+  assert.equal(recovered.reason, "active_position");
+  assert.equal(recovered.progress_minutes, 300);
+  assert.equal(
+    (await db.query("select count(*)::int as n from wg_signals")).rows[0].n,
+    1,
+  );
+  assert.equal(
+    (await db.query("select used from wg_profiles where role='member'")).rows[0]
+      .used,
+    1,
+  );
+  assert.equal(
+    (await db.query("select count(*)::int as n from wg_outbox")).rows[0].n,
+    2,
+  );
+});
+
+test("PostgreSQL independently validates rolling coverage, rejects spoofed readiness, and resumes after an old one-minute hole", async (t) => {
+  const f = await database(t, { seedMinutes: 480 }),
+    { db } = f;
+  // This hole is outside the protected recent 30 minutes. It must not erase
+  // the previous hours or turn a ready, fully seeded engine into a cold start.
+  await db.exec(
+    "delete from wg_market_quotes where quote_at in (select quote_at from wg_market_quotes order by quote_at offset 280 limit 1)",
+  );
+  const context = await f.rpc("wg_market_claim", {});
+  const quote = f.quote;
+  const plan = goldDecision([...context.quotes, quote], quote);
+  assert.equal(plan.reason, "ready");
+  assert.equal(plan.progress, 299);
+  const args = {
+    p_lease: context.lease,
+    p_quote: { at: new Date(quote.at).toISOString(), price: quote.price },
+    p_plan: plan,
+    p_group_chat: "-1001",
+  };
+  await assert.rejects(
+    f.rpc("wg_market_commit", {
+      ...args,
+      p_plan: { ...plan, window: { ...plan.window, observed: 300 } },
+    }),
+    /غير مكتملة أو غير مطابقة/,
+  );
+  assert.equal(
+    (await db.query("select count(*)::int as n from wg_signals")).rows[0].n,
+    0,
+  );
+  assert.equal((await f.rpc("wg_market_commit", args)).recipients, 1);
+  const state = (await db.query("select * from wg_market_state")).rows[0];
+  assert.equal(state.progress_minutes, 299);
+  assert.deepEqual(state.analysis, plan.window);
+  const info = marketStatus(state);
+  assert.equal(info.requiredMinutes, 300);
+  assert.equal(info.progressMinutes, 299);
+  assert.equal(info.recentObservedMinutes, 30);
+  await db.exec("set role anon");
+  await assert.rejects(
+    db.query("select wg_market_window(now())"),
+    /permission denied/,
+  );
+  await db.exec("reset role");
+});
+
+test("database rejects a forged entry during a recent gap even when the worker fabricates matching counters", async (t) => {
+  const f = await database(t),
+    { db } = f;
+  await db.exec(
+    "delete from wg_market_quotes where quote_at in (select quote_at from wg_market_quotes order by quote_at desc offset 4 limit 1)",
+  );
+  const context = await f.rpc("wg_market_claim", {});
+  const quote = f.quote;
+  const badPlan = goldDecision([...context.quotes, quote], quote);
+  assert.equal(badPlan.reason, "recent_gap");
+  const forged = {
+    ...badPlan,
+    reason: "ready",
+    decision: {
+      at: Math.floor(quote.at / MINUTE) * MINUTE,
+      direction: "buy",
+      entry: 4033,
+      stop: 4028,
+      targets: [4038, 4043, 4048],
+    },
+  };
+  await assert.rejects(
+    f.rpc("wg_market_commit", {
+      p_lease: context.lease,
+      p_quote: { at: new Date(quote.at).toISOString(), price: quote.price },
+      p_plan: forged,
+    }),
+    /غير مكتملة أو غير مطابقة/,
+  );
+  assert.equal(
+    (await db.query("select count(*)::int as n from wg_signals")).rows[0].n,
+    0,
+  );
+});
+
+test("SQL and JavaScript agree on rolling coverage across M15 boundaries, partial minutes and source gaps", async (t) => {
+  const { db } = await database(t);
+  const end = Date.UTC(2026, 9, 20, 18, 0);
+  const history = quotes(end, 721)
+    .filter((q, i) => ![240, 400, 640].includes(i))
+    .flatMap((q) => [
+      { ...q, at: q.at + 11000 },
+      { ...q, at: q.at + 41000, price: q.price + 0.01 },
+    ]);
+  await db.query(
+    "insert into wg_market_quotes(quote_at,price) select to_timestamp(at::numeric/1000),price from jsonb_to_recordset($1::jsonb) as q(at bigint,price numeric)",
+    [JSON.stringify(history)],
+  );
+  for (const index of [
+    960, 961, 1000, 1001, 1200, 1201, 1278, 1280, 1300, 1310, 1340, 1370, 1400,
+    1430,
+  ]) {
+    const quote = history[index];
+    const actual = (
+      await db.query("select wg_market_window($1) as data", [
+        new Date(quote.at).toISOString(),
+      ])
+    ).rows[0].data;
+    assert.deepEqual(
+      actual,
+      goldDecision(history, quote).window,
+      new Date(quote.at).toISOString(),
+    );
+  }
+});
+
+test("005 to 006 upgrade preserves a live v1 position, its deliveries, allocations and reference loss budget", async (t) => {
+  const f = await database(t, { rolling: false }),
+    { db } = f;
+  const context = await f.rpc("wg_market_claim", {});
+  const quote = f.quote;
+  const plan = {
+    ...goldDecision([...context.quotes, quote], quote),
+    strategy: "sampled-m15-8-21-m1-breakout-20-v1",
+    progress: 330,
+  };
+  await f.rpc("wg_market_commit", {
+    p_lease: context.lease,
+    p_quote: { at: new Date(quote.at).toISOString(), price: quote.price },
+    p_plan: plan,
+    p_group_chat: "-1001",
+  });
+  await db.exec("update wg_market_state set loss_used=2.5");
+  const before = (await db.query("select id,market_strategy from wg_signals"))
+    .rows;
+  await db.exec(
+    await readFile(
+      new URL(
+        "../supabase/migrations/006_rolling_market_window.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  await f.run();
+  assert.deepEqual(
+    (await db.query("select id,market_strategy from wg_signals")).rows,
+    before,
+  );
+  const state = (await db.query("select * from wg_market_state")).rows[0];
+  assert.equal(Number(state.loss_used), 2.5);
+  assert.equal(state.signal_id, before[0].id);
+  assert.equal(
+    (await db.query("select used from wg_profiles where role='member'")).rows[0]
+      .used,
+    1,
+  );
+  assert.equal(
+    (await db.query("select count(*)::int as n from wg_outbox")).rows[0].n,
     2,
   );
 });

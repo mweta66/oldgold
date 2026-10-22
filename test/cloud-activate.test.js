@@ -39,6 +39,7 @@ const files = () =>
     "003_telegram_events.sql",
     "004_multiple_targets.sql",
     "005_gold_market.sql",
+    "006_rolling_market_window.sql",
   ].map((name) => ({
     version: name.slice(0, 3),
     sql: readFileSync(
@@ -96,7 +97,7 @@ function fixture(options = {}) {
               events_ready: true,
               history_ready: true,
               targets_ready: !options.missingTargets,
-              market_ready: true,
+              market_ready: !options.missingRollingWindow,
             },
           ]);
         if (sql.startsWith("select (select decrypted_secret")) {
@@ -358,6 +359,22 @@ test("an existing schema without target migration is rejected before deployment,
       (c) =>
         c.url.pathname.endsWith("/database/query") &&
         c.body.read_only === false,
+    ),
+  );
+});
+
+test("activation refuses to deploy the rolling worker over a database that still lacks migration 006", async () => {
+  const f = fixture({ missingRollingWindow: true });
+  const result = await f.run();
+  assert.equal(result.error, "SCHEMA_SECURITY_CHECK_FAILED");
+  assert.equal(result.schemaReady, false);
+  assert(
+    !f.calls.some(
+      (c) =>
+        c.url.pathname.endsWith("/deployments") ||
+        c.url.pathname.endsWith("/env") ||
+        (c.url.pathname.endsWith("/database/query") &&
+          c.body.read_only === false),
     ),
   );
 });
