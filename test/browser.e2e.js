@@ -497,6 +497,9 @@ test("administrator research is explicitly hypothetical, survives provider failu
   await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
   await page.locator("#submitLogin").click();
   await page.waitForSelector("#bybitResearchButton", { state: "visible" });
+  await page.waitForFunction(() =>
+    document.querySelector("#lastUpdate").textContent.startsWith("آخر مزامنة:"),
+  );
   assert.equal(calls, 0);
   await page.locator("#bybitResearchButton").click();
   await page.waitForFunction(() =>
