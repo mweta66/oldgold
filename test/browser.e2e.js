@@ -814,6 +814,22 @@ test("Cairo, real logo/watermark and all four administrator-controlled themes wo
     path: "test-results/landing-desktop.png",
     fullPage: true,
   });
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const name = await page.locator(".logo-stage-name").boundingBox(),
+      caption = await page.locator(".art-caption").boundingBox();
+    assert.ok(
+      name.y + name.height + 8 <= caption.y,
+      "Mobile Xgold wordmark must not crowd the market caption",
+    );
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth,
+      ),
+      false,
+    );
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.locator("#loginButton").click();
   await page.locator("#loginEmail").fill(ADMIN_EMAIL);
   await page.locator("#loginPassword").fill(ADMIN_PASSWORD);

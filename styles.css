@@ -1228,8 +1228,11 @@ footer {
   }
   .hero-art {
     width: 100%;
-    min-height: 340px;
+    min-height: 380px;
     transform: none !important;
+  }
+  .logo-stage-name {
+    font-size: 32px;
   }
   .hero .art-caption {
     bottom: 5px;
