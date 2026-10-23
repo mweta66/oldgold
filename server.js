@@ -868,6 +868,7 @@ export async function createApp(options = {}) {
     ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
     ["/icon.svg", ["icon.svg", "image/svg+xml"]],
     ["/assets/wetagold-mark.png", ["assets/wetagold-mark.png", "image/png"]],
+    ["/assets/xgold-mark.png", ["assets/xgold-mark.png", "image/png"]],
     [
       "/assets/fonts/cairo-arabic.woff2",
       ["assets/fonts/cairo-arabic.woff2", "font/woff2"],
@@ -949,7 +950,7 @@ if (
   const port = Number(process.env.PORT || 8000),
     host = process.env.HOST || "127.0.0.1";
   app.server.listen(port, host, () => {
-    console.log(`WetaGold listening on port ${port}`);
+    console.log(`Xgold listening on port ${port}`);
     app.telegram.start();
   });
   const shutdown = () => {

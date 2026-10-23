@@ -29,18 +29,18 @@ const assert = (condition, code) => {
 };
 
 export function migrationBatch(files) {
-  assert(files.length === 8, "MIGRATION_COUNT_INVALID");
+  assert(files.length === 9, "MIGRATION_COUNT_INVALID");
   assert(
     files.every(
       (file, index) =>
         file.version ===
-        ["001", "002", "003", "004", "005", "006", "007", "008"][index],
+        ["001", "002", "003", "004", "005", "006", "007", "008", "009"][index],
     ),
     "MIGRATION_ORDER_INVALID",
   );
   const records = [];
   const statements = files.map(({ version, sql }) => {
-    assert(/^00[12345678]$/.test(version), "MIGRATION_VERSION_INVALID");
+    assert(/^00[123456789]$/.test(version), "MIGRATION_VERSION_INVALID");
     assert(
       (sql.match(/^begin;[ \t]*$/gm) || []).length === 1 &&
         (sql.match(/^commit;[ \t]*$/gm) || []).length === 1,
@@ -108,6 +108,7 @@ export async function activateCloud(
         ["006", "006_rolling_market_window.sql"],
         ["007", "007_optional_manual_reference.sql"],
         ["008", "008_telegram_replies.sql"],
+        ["009", "009_new_signals_only.sql"],
       ].map(([version, file]) => ({
         version,
         sql: readFileSync(
@@ -375,7 +376,9 @@ export async function activateCloud(
        exists(select 1 from pg_constraint where conrelid='public.wg_signals'::regclass and conname='wg_automatic_reference_required')) as manual_reference_ready,
       (to_regprocedure('public.wg_telegram_record_root(bigint,uuid,bigint,bigint)') is not null and
        to_regprocedure('public.wg_telegram_mark_sent(bigint,uuid,bigint,bigint)') is not null and
-       (select count(*) from information_schema.columns where table_schema='public' and table_name='wg_outbox' and column_name in ('telegram_message_id','reply_to_message_id'))=2) as telegram_replies_ready`);
+       (select count(*) from information_schema.columns where table_schema='public' and table_name='wg_outbox' and column_name in ('telegram_message_id','reply_to_message_id'))=2) as telegram_replies_ready,
+      (exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_signals' and column_name='telegram_suppressed') and
+       exists(select 1 from pg_trigger where tgrelid='public.wg_outbox'::regclass and tgname='wg_telegram_new_signals_only' and tgenabled='O')) as telegram_cutover_ready`);
     assert(
       Number(schema[0]?.private_tables) === requiredTables.length &&
         Number(schema[0]?.browser_readable) === 0 &&
@@ -384,7 +387,8 @@ export async function activateCloud(
         schema[0]?.targets_ready &&
         schema[0]?.market_ready &&
         schema[0]?.manual_reference_ready &&
-        schema[0]?.telegram_replies_ready,
+        schema[0]?.telegram_replies_ready &&
+        schema[0]?.telegram_cutover_ready,
       "SCHEMA_SECURITY_CHECK_FAILED",
     );
     report.schemaReady = true;
@@ -740,12 +744,12 @@ if (
     progress: (phase) => process.stdout.write(`Activation phase: ${phase}\n`),
   });
   process.stdout.write(
-    `::notice title=WetaGold activation::${escape(JSON.stringify(report))}\n`,
+    `::notice title=Xgold activation::${escape(JSON.stringify(report))}\n`,
   );
   if (process.env.GITHUB_STEP_SUMMARY)
     appendFileSync(
       process.env.GITHUB_STEP_SUMMARY,
-      `## WetaGold activation\n\n\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\`\n`,
+      `## Xgold activation\n\n\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\`\n`,
     );
   if (report.error) process.exitCode = 1;
 }

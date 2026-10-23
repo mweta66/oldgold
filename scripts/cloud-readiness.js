@@ -444,7 +444,7 @@ export function readinessAnnotation(report) {
     .replaceAll("%", "%25")
     .replaceAll("\r", "%0D")
     .replaceAll("\n", "%0A");
-  return `::notice title=WetaGold cloud readiness::${value}\n`;
+  return `::notice title=Xgold cloud readiness::${value}\n`;
 }
 
 if (
@@ -457,13 +457,13 @@ if (
     if (process.env.GITHUB_STEP_SUMMARY)
       appendFileSync(
         process.env.GITHUB_STEP_SUMMARY,
-        `## WetaGold — read-only connectivity\n\nNo resources or settings were changed. API access does not establish production readiness.\n\n\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\`\n`,
+        `## Xgold — read-only connectivity\n\nNo resources or settings were changed. API access does not establish production readiness.\n\n\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\`\n`,
       );
     if (!report.apiAccessVerified) process.exitCode = 1;
   } catch {
     // Never emit an exception: a fetch error can contain the bot token in its URL.
     process.stderr.write(
-      "::error title=WetaGold cloud readiness::Readiness failed; provider details were suppressed.\n",
+      "::error title=Xgold cloud readiness::Readiness failed; provider details were suppressed.\n",
     );
     process.exitCode = 1;
   }

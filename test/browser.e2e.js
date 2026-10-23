@@ -782,6 +782,15 @@ test("Cairo, real logo/watermark and all four administrator-controlled themes wo
   });
   await page.goto(f.origin);
   await page.evaluate(() => document.fonts.ready);
+  assert.match(await page.title(), /^Xgold \|/);
+  assert.equal(
+    await page.locator(".brand").first().getAttribute("aria-label"),
+    "Xgold الرئيسية",
+  );
+  assert.doesNotMatch(
+    await page.locator("body").innerText(),
+    /WetaGold|WETAGOLD/,
+  );
   assert.match(
     await page
       .locator("body")
@@ -798,13 +807,29 @@ test("Cairo, real logo/watermark and all four administrator-controlled themes wo
     opacity: Number(getComputedStyle(el, "::before").opacity),
     image: getComputedStyle(el, "::before").backgroundImage,
   }));
-  assert.match(watermark.image, /wetagold-mark.png/);
+  assert.match(watermark.image, /xgold-mark.png/);
   assert.ok(watermark.opacity > 0 && watermark.opacity < 0.05);
   await mkdir("test-results", { recursive: true });
   await page.screenshot({
     path: "test-results/landing-desktop.png",
     fullPage: true,
   });
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const name = await page.locator(".logo-stage-name").boundingBox(),
+      caption = await page.locator(".art-caption").boundingBox();
+    assert.ok(
+      name.y + name.height + 8 <= caption.y,
+      "Mobile Xgold wordmark must not crowd the market caption",
+    );
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth,
+      ),
+      false,
+    );
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.locator("#loginButton").click();
   await page.locator("#loginEmail").fill(ADMIN_EMAIL);
   await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
@@ -1137,7 +1162,7 @@ test("manifest carries same-origin preview credentials and does not redirect to 
   assert.ok(
     cookies.every((cookie) => cookie.includes("preview-auth-test=present")),
   );
-  assert.equal(JSON.parse(manifest.data).name, "WetaGold");
+  assert.equal(JSON.parse(manifest.data).name, "Xgold");
 });
 
 test("desktop and mobile: real login, account CRUD, publication, member quota, chart controls and logout", async (t) => {

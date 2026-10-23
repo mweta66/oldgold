@@ -104,7 +104,7 @@ test("a failed final database acknowledgement reuses the saved publication witho
   assert.deepEqual(f.acknowledgements, [{ id: 101, reply: 101 }]);
 });
 
-test("a legacy update creates one explicitly historical context and replies there without inventing a new trade", async () => {
+test("an eligible post-cutover trade can recover its missing root without inventing a new entry", async () => {
   const f = sender();
   const update = {
     ...f.context,
@@ -112,7 +112,7 @@ test("a legacy update creates one explicitly historical context and replies ther
     snapshot: { ...source, targets_hit: 1 },
   };
   await deliverSignalMessage(update);
-  assert.match(f.requests[0].text, /^🧵 متابعة صفقة سابقة #1/);
+  assert.match(f.requests[0].text, /^🧵 استكمال متابعة الإشارة #1/);
   assert.match(f.requests[0].text, /ليست إشارة دخول جديدة/);
   assert.doesNotMatch(f.requests[0].text, /^🟢|^🔴/);
   assert.equal(f.requests[1].reply_parameters.message_id, 101);

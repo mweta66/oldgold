@@ -242,6 +242,13 @@ test("legacy SQLite reference migration preserves rows, snapshots, child foreign
     )
     .all();
   original.exec("pragma foreign_keys=off");
+  const deliveryTriggers = original
+    .prepare(
+      "select name,sql from sqlite_schema where type='trigger' and tbl_name='outbox'",
+    )
+    .all();
+  for (const trigger of deliveryTriggers)
+    original.exec(`drop trigger "${trigger.name}"`);
   original.exec(
     schema
       .replace(
@@ -257,6 +264,7 @@ test("legacy SQLite reference migration preserves rows, snapshots, child foreign
     `insert into legacy_required_signals(${columns}) select ${columns} from signals; drop table signals; alter table legacy_required_signals rename to signals;`,
   );
   for (const index of indexes) original.exec(index.sql);
+  for (const trigger of deliveryTriggers) original.exec(trigger.sql);
   original.close();
   const db = openStore(file);
   try {

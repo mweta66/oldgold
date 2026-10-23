@@ -21,17 +21,17 @@
 }
 :root {
   color-scheme: dark;
-  --bg: #0b0e14;
-  --panel: #121820;
-  --line: #28313c;
+  --bg: #0c1118;
+  --panel: #141c26;
+  --line: #2c3745;
   --text: #eef2f5;
   --muted: #a1abba;
-  --gold: #dfbb73;
+  --gold: #ebc77f;
   --green: #63d7a0;
   --red: #ff929d;
-  --radius: 18px;
-  --panel-high: #18202b;
-  --field: #0d131d;
+  --radius: 22px;
+  --panel-high: #1b2633;
+  --field: #0e1721;
   --hover: #263342;
   --accent-ink: #171309;
   --positive-bg: #183c2e;
@@ -108,8 +108,7 @@ body::before {
   content: "";
   position: fixed;
   inset: 12vh 8vw 0;
-  background: url("/assets/wetagold-mark.png") center / min(65vw, 680px)
-    no-repeat;
+  background: url("/assets/xgold-mark.png") center / min(65vw, 680px) no-repeat;
   opacity: 0.035;
   z-index: -1;
   pointer-events: none;
@@ -312,6 +311,13 @@ nav {
   display: grid;
   place-items: center;
   position: relative;
+  border: 1px solid color-mix(in srgb, var(--gold) 18%, var(--line));
+  border-radius: 36px;
+  background: radial-gradient(
+    ellipse at 50% 40%,
+    color-mix(in srgb, var(--gold) 10%, transparent),
+    transparent 72%
+  );
 }
 .gold-symbol {
   display: grid;
@@ -909,6 +915,20 @@ footer {
   flex: none;
   filter: drop-shadow(0 0 13px #d6b56b18);
 }
+.brand-wordmark {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.8px;
+  line-height: 1.2;
+}
+.brand-wordmark small {
+  display: block;
+  margin-top: 5px;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 2.8px;
+  color: var(--muted);
+}
 .eyebrow-line {
   display: inline-block;
   width: 26px;
@@ -920,6 +940,15 @@ footer {
 .hero-content {
   position: relative;
   z-index: 2;
+}
+.hero-content::before {
+  content: "";
+  display: block;
+  width: 46px;
+  height: 4px;
+  margin-bottom: 28px;
+  border-radius: 10px;
+  background: var(--gold);
 }
 .hero-copy {
   font-size: 16px;
@@ -965,9 +994,9 @@ footer {
   filter: drop-shadow(0 12px 40px #b9934130);
 }
 .logo-stage-name {
-  font-size: 28px;
+  font-size: 38px;
   font-weight: 800;
-  letter-spacing: 1px;
+  letter-spacing: -1px;
   line-height: 1.1;
 }
 .logo-stage-name > span {
@@ -1010,10 +1039,12 @@ footer {
   border-radius: 12px;
   background: color-mix(in srgb, var(--panel) 65%, transparent);
   border: 1px solid var(--line);
+  border-top: 2px solid color-mix(in srgb, var(--gold) 50%, var(--line));
 }
 .feature-strip > div:first-child {
   padding-inline-start: 24px;
   border: 1px solid var(--line);
+  border-top: 2px solid color-mix(in srgb, var(--gold) 50%, var(--line));
 }
 .feature-strip .feature-index {
   color: var(--gold);
@@ -1197,8 +1228,11 @@ footer {
   }
   .hero-art {
     width: 100%;
-    min-height: 340px;
+    min-height: 380px;
     transform: none !important;
+  }
+  .logo-stage-name {
+    font-size: 32px;
   }
   .hero .art-caption {
     bottom: 5px;

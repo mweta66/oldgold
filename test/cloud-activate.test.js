@@ -43,6 +43,7 @@ const files = () =>
     "006_rolling_market_window.sql",
     "007_optional_manual_reference.sql",
     "008_telegram_replies.sql",
+    "009_new_signals_only.sql",
   ].map((name) => ({
     version: name.slice(0, 3),
     sql: readFileSync(
@@ -103,6 +104,7 @@ function fixture(options = {}) {
               market_ready: !options.missingRollingWindow,
               manual_reference_ready: !options.missingOptionalReference,
               telegram_replies_ready: !options.missingTelegramReplies,
+              telegram_cutover_ready: !options.missingTelegramCutover,
             },
           ]);
         if (sql.startsWith("select (select decrypted_secret")) {
@@ -412,6 +414,20 @@ test("activation refuses to publish reply workers over a schema without migratio
         c.url.pathname.endsWith("/env") ||
         (c.url.pathname.endsWith("/database/query") &&
           c.body.read_only === false),
+    ),
+  );
+});
+
+test("activation refuses Telegram workers without the durable new-trades-only cutover", async () => {
+  const f = fixture({ missingTelegramCutover: true });
+  const r = await f.run();
+  assert.equal(r.error, "SCHEMA_SECURITY_CHECK_FAILED");
+  assert.equal(r.schemaReady, false);
+  assert(
+    !f.calls.some(
+      (c) =>
+        c.url.pathname.endsWith("/deployments") ||
+        c.url.pathname.endsWith("/env"),
     ),
   );
 });

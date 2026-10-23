@@ -1436,7 +1436,7 @@ $("#exportHistory").addEventListener("click", () => {
   );
   const link = element("a");
   link.href = url;
-  link.download = `wetagold-history-page-${historyData.page}.csv`;
+  link.download = `xgold-history-page-${historyData.page}.csv`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   notify(
