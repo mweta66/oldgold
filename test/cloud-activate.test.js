@@ -31,6 +31,7 @@ const tables = [
   "wg_signal_events",
   "wg_market_state",
   "wg_market_quotes",
+  "wg_telegram_threads",
 ];
 const files = () =>
   [
@@ -41,6 +42,7 @@ const files = () =>
     "005_gold_market.sql",
     "006_rolling_market_window.sql",
     "007_optional_manual_reference.sql",
+    "008_telegram_replies.sql",
   ].map((name) => ({
     version: name.slice(0, 3),
     sql: readFileSync(
@@ -93,13 +95,14 @@ function fixture(options = {}) {
         if (sql.includes("as private_tables"))
           return json([
             {
-              private_tables: 11,
+              private_tables: 12,
               browser_readable: options.unsafe ? 1 : 0,
               events_ready: true,
               history_ready: true,
               targets_ready: !options.missingTargets,
               market_ready: !options.missingRollingWindow,
               manual_reference_ready: !options.missingOptionalReference,
+              telegram_replies_ready: !options.missingTelegramReplies,
             },
           ]);
         if (sql.startsWith("select (select decrypted_secret")) {
@@ -383,6 +386,22 @@ test("activation refuses to deploy the rolling worker over a database that still
 
 test("activation refuses to deploy optional-reference forms over a database without migration 007", async () => {
   const f = fixture({ missingOptionalReference: true });
+  const result = await f.run();
+  assert.equal(result.error, "SCHEMA_SECURITY_CHECK_FAILED");
+  assert.equal(result.schemaReady, false);
+  assert(
+    !f.calls.some(
+      (c) =>
+        c.url.pathname.endsWith("/deployments") ||
+        c.url.pathname.endsWith("/env") ||
+        (c.url.pathname.endsWith("/database/query") &&
+          c.body.read_only === false),
+    ),
+  );
+});
+
+test("activation refuses to publish reply workers over a schema without migration 008", async () => {
+  const f = fixture({ missingTelegramReplies: true });
   const result = await f.run();
   assert.equal(result.error, "SCHEMA_SECURITY_CHECK_FAILED");
   assert.equal(result.schemaReady, false);

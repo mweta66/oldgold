@@ -781,9 +781,11 @@ test("Supabase status updates automatically send TP to the verified private grou
     ).status,
     200,
   );
-  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent.length, 2);
   assert.equal(f.sent[0].chat_id, "-1001");
-  assert.match(f.sent[0].text, /تحقق الهدف TP/);
+  assert.match(f.sent[0].text, /ليست إشارة دخول جديدة/);
+  assert.match(f.sent[1].text, /^✅ تحقق الهدف TP/);
+  assert.equal(f.sent[1].reply_parameters.message_id, 1);
   assert.equal(
     f.calls.find((c) => c.path.endsWith("/wg_signal_status")).data.p_group_chat,
     "-1001",
@@ -846,9 +848,11 @@ for (const rejectedPolicy of ["public", "memberPosting"])
     assert.equal(r.status, 200);
     assert.deepEqual(
       f.sent.map((s) => s.chat_id),
-      ["1001"],
+      ["1001", "1001"],
     );
-    assert.match(f.sent[0].text, /وقف الخسارة SL/);
+    assert.match(f.sent[0].text, /ليست إشارة دخول جديدة/);
+    assert.match(f.sent[1].text, /^❌ تم تفعيل وقف الخسارة SL/);
+    assert.equal(f.sent[1].reply_parameters.message_id, 1);
     assert.equal(f.tables.wg_outbox[0].state, "pending");
     assert.equal(f.tables.wg_outbox[0].attempts, 1);
   });
@@ -954,7 +958,7 @@ test("Supabase Telegram webhook/job are secret-protected and publishing sends te
   );
   assert.match(f.sent.find((s) => s.chat_id === "1001").text, /OANDA:XAUUSD/);
   const groupMessage = f.sent.find((s) => s.chat_id === "-1001").text;
-  assert.match(groupMessage, /^شراء\nالدخول:/);
+  assert.match(groupMessage, /^🟢 📈 إشارة شراء\nالدخول:/);
   assert.match(groupMessage, /الدخول: 100\.00\nSL: 99\.00\nTP: 101\.50/);
   assert.doesNotMatch(groupMessage, /UTC|OANDA|المصدر|مرجع التحديث|WetaGold/);
   assert.equal(f.tables.wg_outbox[0].state, "sent");
