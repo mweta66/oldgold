@@ -1,4 +1,4 @@
-name: Activate WetaGold
+name: Activate Xgold
 on:
   workflow_dispatch:
 permissions:

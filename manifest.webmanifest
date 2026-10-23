@@ -1,16 +1,16 @@
 {
-  "name": "WetaGold",
-  "short_name": "WetaGold",
+  "name": "Xgold",
+  "short_name": "Xgold",
   "lang": "ar",
   "dir": "rtl",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0b0e14",
-  "theme_color": "#0b0e14",
+  "background_color": "#0c1118",
+  "theme_color": "#0c1118",
   "icons": [
     {
-      "src": "/assets/wetagold-mark.png",
-      "sizes": "1254x1254",
+      "src": "/assets/xgold-mark.png",
+      "sizes": "1280x1280",
       "type": "image/png",
       "purpose": "any"
     }

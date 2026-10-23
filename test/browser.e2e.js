@@ -782,6 +782,15 @@ test("Cairo, real logo/watermark and all four administrator-controlled themes wo
   });
   await page.goto(f.origin);
   await page.evaluate(() => document.fonts.ready);
+  assert.match(await page.title(), /^Xgold \|/);
+  assert.equal(
+    await page.locator(".brand").first().getAttribute("aria-label"),
+    "Xgold الرئيسية",
+  );
+  assert.doesNotMatch(
+    await page.locator("body").innerText(),
+    /WetaGold|WETAGOLD/,
+  );
   assert.match(
     await page
       .locator("body")
@@ -798,7 +807,7 @@ test("Cairo, real logo/watermark and all four administrator-controlled themes wo
     opacity: Number(getComputedStyle(el, "::before").opacity),
     image: getComputedStyle(el, "::before").backgroundImage,
   }));
-  assert.match(watermark.image, /wetagold-mark.png/);
+  assert.match(watermark.image, /xgold-mark.png/);
   assert.ok(watermark.opacity > 0 && watermark.opacity < 0.05);
   await mkdir("test-results", { recursive: true });
   await page.screenshot({
@@ -1137,7 +1146,7 @@ test("manifest carries same-origin preview credentials and does not redirect to 
   assert.ok(
     cookies.every((cookie) => cookie.includes("preview-auth-test=present")),
   );
-  assert.equal(JSON.parse(manifest.data).name, "WetaGold");
+  assert.equal(JSON.parse(manifest.data).name, "Xgold");
 });
 
 test("desktop and mobile: real login, account CRUD, publication, member quota, chart controls and logout", async (t) => {

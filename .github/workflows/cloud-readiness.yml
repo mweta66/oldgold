@@ -1,4 +1,4 @@
-name: WetaGold cloud readiness
+name: Xgold cloud readiness
 on:
   workflow_dispatch:
 permissions:

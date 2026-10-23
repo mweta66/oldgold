@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore } from "../lib/store.js";
 
-test("SQLite event migration preserves every old delivery and retains a recoverable v1 queue snapshot", async () => {
+test("SQLite upgrade retains every old delivery and a recoverable v1 snapshot while silencing its old failed queue", async () => {
   const directory = await mkdtemp(
       join(tmpdir(), "wetagold-telegram-migration-"),
     ),
@@ -23,8 +23,17 @@ test("SQLite event migration preserves every old delivery and retains a recovera
   try {
     const row = db.prepare("SELECT * FROM outbox").get();
     assert.equal(row.id, 7);
-    assert.equal(row.state, "failed");
+    assert.equal(row.state, "cancelled");
     assert.equal(row.attempts, 3);
+    assert.equal(
+      db.prepare("SELECT state FROM outbox_v1_backup").get().state,
+      "failed",
+    );
+    assert.equal(
+      db.prepare("SELECT telegram_suppressed FROM signals").get()
+        .telegram_suppressed,
+      1,
+    );
     assert.ok(row.event_id);
     const event = db.prepare("SELECT * FROM signal_events").get();
     assert.equal(JSON.parse(event.snapshot).status, "pending");

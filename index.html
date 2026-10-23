@@ -5,11 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="WetaGold — منصة متابعة إشارات الذهب وإدارة اشتراكك"
+      content="Xgold — إشارات الذهب بوضوح. تابع الدخول والأهداف والنتائج في مساحة واحدة."
     />
-    <meta name="theme-color" content="#0b0e14" />
-    <title>WetaGold | إشارات الذهب</title>
-    <link rel="icon" href="/assets/wetagold-mark.png" type="image/png" />
+    <meta name="theme-color" content="#0c1118" />
+    <meta property="og:title" content="Xgold | إشارات الذهب" />
+    <meta
+      property="og:description"
+      content="إشارة واضحة. متابعة منظمة. من الدخول إلى النتيجة."
+    />
+    <meta property="og:image" content="/assets/xgold-mark.png" />
+    <meta property="og:type" content="website" />
+    <title>Xgold | إشارات الذهب</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/assets/xgold-mark.png" />
     <link
       rel="preload"
       href="/assets/fonts/cairo-arabic.woff2"
@@ -28,15 +36,17 @@
   <body>
     <a class="skip-link" href="#main">انتقل للمحتوى</a>
     <header class="topbar">
-      <a class="brand" href="/" aria-label="WetaGold الرئيسية"
+      <a class="brand" href="/" aria-label="Xgold الرئيسية"
         ><img
           class="brand-logo"
-          src="/assets/wetagold-mark.png"
+          src="/assets/xgold-mark.png"
           alt=""
           width="50"
           height="50"
         />
-        <span dir="ltr">Weta<span class="gold">Gold</span></span></a
+        <span class="brand-wordmark" dir="ltr"
+          >X<span class="gold">gold</span><small>GOLD SIGNALS</small></span
+        ></a
       >
       <nav aria-label="القائمة الرئيسية">
         <a href="#memberPanel" class="member-only" hidden>الإشارات</a>
@@ -72,12 +82,12 @@
       <section class="hero" id="landing">
         <div class="hero-content">
           <p class="eyebrow">
-            <span class="eyebrow-line"></span> WETAGOLD · GOLD INTELLIGENCE
+            <span class="eyebrow-line"></span> XGOLD · THE SIGNAL IS CLEAR
           </p>
-          <h1>رؤيتك للذهب.<br /><span class="gold">بُعد جديد.</span></h1>
+          <h1>الذهب يتحرّك.<br /><span class="gold">خليك في الصورة.</span></h1>
           <p class="hero-copy">
-            كل ما تحتاجه لمتابعة إشارات الذهب، في مساحة صُممت للوضوح. من نقطة
-            الدخول إلى إغلاق الإشارة، التفاصيل دايمًا قدامك.
+            إشارة واضحة. متابعة منظمة. كل تفاصيل الدخول والوقف والأهداف ونتائجها
+            المسجّلة، في مكان واحد بعيد عن الزحمة.
           </p>
           <button
             class="primary-btn hero-button"
@@ -88,7 +98,7 @@
             ادخل لحسابك <span aria-hidden="true">←</span>
           </button>
           <p class="muted small">
-            الحسابات والاشتراكات بتتفعّل عن طريق إدارة WetaGold.
+            مساحة خاصة للمشتركين · التفعيل عن طريق إدارة Xgold.
           </p>
         </div>
         <div class="hero-art" aria-hidden="true">
@@ -96,13 +106,11 @@
           <div class="art-glow"></div>
           <div class="logo-stage">
             <img
-              src="/assets/wetagold-mark.png"
+              src="/assets/xgold-mark.png"
               width="320"
               height="320"
               alt=""
-            /><span class="logo-stage-name" dir="ltr"
-              >Weta<span>Gold</span></span
-            >
+            /><span class="logo-stage-name" dir="ltr">X<span>gold</span></span>
           </div>
           <span class="art-chip chip-one"
             ><b dir="ltr">M15</b> رؤية الاتجاه</span
@@ -111,7 +119,7 @@
             ><b dir="ltr">M1</b> توقيت الدخول</span
           >
           <div class="art-caption" dir="ltr">
-            XAU / USD <span>PRECISION. CLARITY. CONTROL.</span>
+            XAU / USD <span>ONE MARKET. A CLEARER VIEW.</span>
           </div>
         </div>
         <div class="feature-strip">
@@ -385,7 +393,7 @@
         <div class="section-heading">
           <div>
             <p class="eyebrow">ADMIN CONTROL CENTER</p>
-            <h2 class="page-title">إدارة WetaGold</h2>
+            <h2 class="page-title">إدارة Xgold</h2>
           </div>
           <button id="pauseButton" class="secondary-btn" type="button">
             —
@@ -459,6 +467,12 @@
               اختيارك يُحفظ للموقع كله ويظهر للزوار والمشتركين. الخط Cairo
               واللوجو موجودان في كل ثيم.
             </p>
+            <a
+              class="text-link small"
+              href="/assets/xgold-mark.png"
+              download="Xgold.png"
+              >تحميل شعار Xgold كصورة PNG ↗</a
+            >
           </div>
           <form id="themeForm">
             <div class="field">
@@ -708,6 +722,11 @@
             </div>
           </div>
           <p id="adminTelegramStatus" class="muted"></p>
+          <p class="small muted">
+            تنبيهات Xgold للصفقات الجديدة بعد تفعيل النسخة فقط. الصفقات السابقة
+            تظل في السجل دون إرسال رسائل أو ردود عنها، حتى عند تحقق هدف أو وقف
+            لاحقًا.
+          </p>
           <p id="deliveryStatus" class="small muted"></p>
           <p id="botCheckMessage" class="small" role="status"></p>
           <p id="groupCheckMessage" class="small" role="status"></p>
@@ -774,7 +793,7 @@
         >
           ×
         </button>
-        <p class="eyebrow">WELCOME TO WETAGOLD</p>
+        <p class="eyebrow">WELCOME TO XGOLD</p>
         <h2 id="loginTitle">تسجيل الدخول</h2>
         <p class="muted small">استخدم بيانات الحساب اللي أنشأها لك المدير.</p>
         <div class="field">
@@ -805,14 +824,14 @@
       <a class="brand footer-brand" href="/" dir="ltr"
         ><img
           class="brand-logo"
-          src="/assets/wetagold-mark.png"
+          src="/assets/xgold-mark.png"
           alt=""
           width="32"
           height="32"
         />
-        Weta<span class="gold">Gold</span></a
+        X<span class="gold">gold</span></a
       ><span>إشاراتك، في مكان واحد.</span
-      ><span>© <span id="year"></span> WetaGold</span>
+      ><span>© <span id="year"></span> Xgold</span>
       <a
         id="adminContact"
         class="primary-btn admin-contact"

@@ -347,7 +347,11 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
       tables[name] = rows.filter((r) => !matches(r, url));
       return new Response(null, { status: 204 });
     }
-    const filtered = rows.filter((r) => matches(r, url));
+    const filtered = rows
+      .filter((r) => matches(r, url))
+      .map((r) =>
+        name === "wg_signals" ? { telegram_suppressed: false, ...r } : r,
+      );
     const offset = Number(url.searchParams.get("offset") || 0);
     const limited = filtered.slice(
       offset,

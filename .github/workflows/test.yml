@@ -1,4 +1,4 @@
-name: Verify WetaGold
+name: Verify Xgold
 on: [push, pull_request]
 permissions:
   contents: read
