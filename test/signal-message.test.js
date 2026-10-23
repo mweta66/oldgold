@@ -25,7 +25,7 @@ test("group publication contains only direction and entry/SL/targets, without tr
   assert.equal(
     compact(),
     [
-      "شراء",
+      "🟢 📈 إشارة شراء",
       "الدخول: 4130.00",
       "SL: 4125.00",
       "TP1: 4135.00",
@@ -51,7 +51,7 @@ test("compact sell supports the legacy single target and stored numeric strings"
   };
   assert.equal(
     compact(value),
-    "بيع\nالدخول: 4130.00\nSL: 4135.00\nTP: 4125.25",
+    "🔴 📉 إشارة بيع\nالدخول: 4130.00\nSL: 4135.00\nTP: 4125.25",
   );
 });
 
@@ -71,36 +71,36 @@ test("target notifications are distinguishable, omit times and mark only snapsho
     { ...signal, targets_hit: 1 },
     { kind: "tp1", created_at: "2026-10-22T04:00:00Z" },
   );
-  assert.match(one, /^شراء — تحديث TP1\n/);
-  assert.match(one, /TP1: 4135\.00 ✓/);
-  assert.doesNotMatch(one, /TP2: 4140\.00 ✓|2026|07:00:00|وقت|توقيت/);
+  assert.match(one, /^✅ تحقق الهدف TP1 — شراء\n/);
+  assert.match(one, /TP1: 4135\.00 ✅/);
+  assert.doesNotMatch(one, /TP2: 4140\.00 ✅|2026|07:00:00|وقت|توقيت/);
   const second = compact(
     { ...signal, targets_hit: 2 },
     { kind: "tp2", created_at: "2026-10-22T04:01:00Z" },
   );
-  assert.match(second, /^شراء — تحديث TP2\nالدخول:/);
-  assert.match(second, /TP2: 4140\.00 ✓/);
-  assert.doesNotMatch(second, /TP3: 4145\.00 ✓|وقت|توقيت/);
+  assert.match(second, /^✅ تحقق الهدف TP2 — شراء\nالدخول:/);
+  assert.match(second, /TP2: 4140\.00 ✅/);
+  assert.doesNotMatch(second, /TP3: 4145\.00 ✅|وقت|توقيت/);
   const final = compact(
     { ...signal, targets_hit: 3, status: "target" },
     { kind: "tp3" },
   );
-  assert.match(final, /^شراء — تحديث TP3\n/);
+  assert.match(final, /^✅ تحقق الهدف TP3 — شراء\n/);
   assert.equal(final.split("\n").length, 6);
-  assert.equal((final.match(/✓/g) || []).length, 3);
+  assert.equal((final.match(/✅/g) || []).length, 4);
 });
 
 test("brief lifecycle updates never disguise stops, cancellation or unresolved results as a new signal", () => {
   for (const [status, label] of [
-    ["open", "مفتوحة"],
-    ["target", "تحقق الهدف TP"],
-    ["stopped", "وقف الخسارة SL"],
-    ["expired", "انتهت"],
-    ["cancelled", "ملغاة"],
-    ["unresolved", "نتيجة غير محسومة"],
+    ["open", "📊 شراء — مفتوحة"],
+    ["target", "✅ تحقق الهدف TP — شراء"],
+    ["stopped", "❌ تم تفعيل وقف الخسارة SL — شراء"],
+    ["expired", "⌛ شراء — انتهت"],
+    ["cancelled", "🚫 شراء — ملغاة"],
+    ["unresolved", "⚠️ شراء — نتيجة غير محسومة"],
   ]) {
     const message = compact({ ...signal, status }, { kind: "status" });
-    assert.equal(message.split("\n")[0], "شراء — " + label);
+    assert.equal(message.split("\n")[0], label);
     assert.equal(message.split("\n").length, 6);
   }
 });
@@ -132,7 +132,7 @@ test("compact prices retain sub-cent precision without grouping separators or mu
 
 test("private messages keep their detailed source, UTC timestamps and reference-price limitations by default", () => {
   const message = signalMessage(signal, { kind: "publish", id: 5 });
-  assert.match(message, /إشارة جديدة/);
+  assert.match(message, /^🟢 📈 إشارة شراء/);
   assert.match(message, /Gold API|GOLDAPI:XAUUSD/);
   assert.match(message, /وقت إصدار الإشارة UTC/);
   assert.match(message, /30 ثانية|ليست تأكيد تنفيذ/);

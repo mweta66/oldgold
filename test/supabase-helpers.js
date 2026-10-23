@@ -53,6 +53,7 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
       },
     ],
     wg_market_quotes: [],
+    wg_telegram_threads: [],
   };
   const calls = [],
     sent = [];
@@ -99,6 +100,14 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
           },
           429,
         );
+      if (method === "sendMessage")
+        return json({
+          ok: true,
+          result: {
+            message_id: sent.length,
+            chat: { id: Number(data.chat_id) },
+          },
+        });
       if (method === "getChat")
         return json({
           ok: true,
@@ -205,6 +214,46 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
     assert.equal(headers.get("apikey"), env.SUPABASE_SERVICE_ROLE_KEY);
     if (url.pathname.startsWith("/rest/v1/rpc/")) {
       const name = url.pathname.split("/").pop();
+      if (
+        name === "wg_telegram_record_root" ||
+        name === "wg_telegram_mark_sent"
+      ) {
+        const row = tables.wg_outbox.find((r) => r.id === data.p_id);
+        if (!row || row.state !== "processing" || row.lease_id !== data.p_lease)
+          return name === "wg_telegram_mark_sent"
+            ? json(false)
+            : json(
+                { code: "P0001", message: "WG: انتهت صلاحية عامل الرسالة." },
+                400,
+              );
+        let root = tables.wg_telegram_threads.find(
+          (r) =>
+            r.signal_id === row.signal_id && r.destination === row.destination,
+        );
+        if (name === "wg_telegram_record_root") {
+          if (!root) {
+            root = {
+              signal_id: row.signal_id,
+              destination: row.destination,
+              message_id: data.p_message_id,
+            };
+            tables.wg_telegram_threads.push(root);
+          } else if (data.p_previous === root.message_id)
+            root.message_id = data.p_message_id;
+          return json(root.message_id);
+        }
+        assert.equal(root?.message_id, data.p_root_id);
+        Object.assign(row, {
+          state: "sent",
+          telegram_message_id: data.p_message_id,
+          reply_to_message_id:
+            tables.wg_signal_events.find((e) => e.id === row.event_id)?.kind ===
+            "publish"
+              ? null
+              : data.p_root_id,
+        });
+        return json(true);
+      }
       if (name === "wg_settings_update")
         Object.assign(tables.wg_settings[0], data.p_data);
       if (name === "wg_market_config")
