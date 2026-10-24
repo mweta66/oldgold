@@ -275,6 +275,7 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
             );
         return json({ enabled: data.p_enabled, changed });
       }
+      if (name === "wg_market_risk_limit_enabled") return json(false);
       if (name === "wg_market_config")
         tables.wg_market_state[0].enabled = data.p_enabled;
       if (name === "wg_member_update")

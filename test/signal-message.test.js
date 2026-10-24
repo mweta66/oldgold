@@ -22,6 +22,9 @@ const compact = (value = signal, event = { kind: "publish" }) =>
   signalMessage(value, event, { compact: true });
 
 test("group publication contains only direction and entry/SL/targets, without trade times", () => {
+  const detailed = signalMessage(signal);
+  assert.doesNotMatch(detailed, /0\.5%|10%/);
+  assert.match(detailed, /لا يوجد حد خسارة تراكمي/);
   assert.equal(
     compact(),
     [

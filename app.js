@@ -1279,7 +1279,6 @@ function renderMarket() {
     paused: "النشر متوقف من الإعداد العام",
     disabled: "الإشارات الآلية متوقفة من المدير",
     cooldown: "فترة انتظار بعد إغلاق المتابعة",
-    risk_halted: "توقف النشر: المتبقي من ميزانية الخسارة لا يكفي لإشارة جديدة",
     ready: "التحليل جاهز",
   };
   $("#marketStatus").replaceChildren(
@@ -1311,7 +1310,7 @@ function renderMarket() {
     ),
     element(
       "p",
-      `المخاطرة المرجعية للإشارة: ${market.riskPerSignal}% · الميزانية المستخدمة ${Number(market.lossBudgetUsed).toFixed(2)} / ${market.lossBudgetLimit}%. ليست نتائج حساب وسيط.`,
+      "لا يوجد إيقاف تلقائي للإشارات بسبب نسبة خسارة تراكمية. وقف كل صفقة وشروط الفرصة وجودة البيانات تظل مطبّقة؛ الموقع لا يدير رأس مالك ولا يضمن حدّ خسارتك.",
       "small muted",
     ),
   );

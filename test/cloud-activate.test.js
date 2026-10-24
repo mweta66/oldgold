@@ -48,6 +48,7 @@ const files = () =>
     "010_telegram_sending_switch.sql",
     "011_market_structure_levels.sql",
     "012_cloud_market_polling.sql",
+    "013_remove_cumulative_risk_halt.sql",
   ].map((name) => ({
     version: name.slice(0, 3),
     sql: readFileSync(
@@ -112,6 +113,7 @@ function fixture(options = {}) {
               telegram_switch_ready: !options.missingTelegramSwitch,
               market_structure_ready: !options.missingMarketStructure,
               cloud_poller_ready: !options.missingCloudPoller,
+              unlimited_market_ready: !options.missingUnlimitedMarket,
             },
           ]);
         if (sql.startsWith("select (select decrypted_secret")) {
@@ -444,6 +446,7 @@ test("activation refuses to deploy without the switch, market structure or nativ
     "missingTelegramSwitch",
     "missingMarketStructure",
     "missingCloudPoller",
+    "missingUnlimitedMarket",
   ]) {
     const f = fixture({ [flag]: true }),
       r = await f.run();

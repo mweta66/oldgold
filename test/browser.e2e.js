@@ -282,6 +282,14 @@ test("cloud browser separates sampled gold warmup, unresolved history and source
     () => !document.querySelector("#refreshButton").disabled,
   );
   assert.match(await page.locator("#marketStatus").textContent(), /299 \/ 300/);
+  assert.match(
+    await page.locator("#marketStatus").textContent(),
+    /لا يوجد إيقاف تلقائي/,
+  );
+  assert.doesNotMatch(
+    await page.locator("#marketStatus").textContent(),
+    /0\.5%|10%|الميزانية المستخدمة/,
+  );
   assert.match(await page.locator("#marketStatus").textContent(), /29 \/ 30/);
   assert.match(await page.locator("#marketStatus").textContent(), /120 ثانية/);
   assert.match(
