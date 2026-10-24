@@ -6,7 +6,7 @@ import { goldDecision } from "../lib/gold-market.js";
 const ADMIN = "00000000-0000-4000-8000-000000000001",
   MEMBER = "00000000-0000-4000-8000-000000000002",
   minute = 60000;
-async function database(t) {
+async function database(t, { beforeRiskRemoval = false } = {}) {
   const db = new PGlite();
   t.after(() => db.close());
   await db.exec(`create schema auth;create table auth.users(id uuid primary key);create role anon;create role authenticated;create role service_role bypassrls;
@@ -17,7 +17,11 @@ async function database(t) {
  create function net.http_get(url text,params jsonb default '{}',headers jsonb default '{}',timeout_milliseconds integer default 1000) returns bigint language sql as $$insert into net.requests(url,headers) values(url,headers) returning id;$$;`);
   const dir = new URL("../supabase/migrations/", import.meta.url);
   for (const name of (await readdir(dir))
-    .filter((x) => /^\d{3}_.*\.sql$/.test(x))
+    .filter(
+      (x) =>
+        /^\d{3}_.*\.sql$/.test(x) &&
+        !(beforeRiskRemoval && x.startsWith("013_")),
+    )
     .sort())
     await db.exec(await readFile(new URL(name, dir), "utf8"));
   await db.query("insert into auth.users values($1),($2)", [ADMIN, MEMBER]);
@@ -84,6 +88,7 @@ test("cloud quotes publish real v3 levels and track TP/SL without an external hi
     end = Math.floor(at / minute) * minute;
   await seed(db, history(end).slice(0, -1));
   await db.query("select wg_market_config($1,true)", [ADMIN]);
+  await db.exec("update wg_market_state set loss_used=10000");
   const push = async (price, offset = 0) =>
     (
       await db.query("select wg_market_cloud_quote($1::jsonb) x", [
@@ -91,6 +96,18 @@ test("cloud quotes publish real v3 levels and track TP/SL without an external hi
       ])
     ).rows[0].x;
   assert.equal((await push(4033)).reason, "active_position");
+  assert.equal(
+    Number(
+      (await db.query("select loss_used from wg_market_state")).rows[0]
+        .loss_used,
+    ),
+    10000,
+  );
+  assert.equal(
+    (await db.query("select wg_market_risk_limit_enabled() enabled")).rows[0]
+      .enabled,
+    false,
+  );
   const signal = (await db.query("select * from wg_signals")).rows[0];
   assert.equal(signal.market_levels.method, "confirmed-sampled-pivots-v1");
   assert.equal(
@@ -129,6 +146,75 @@ test("cloud quotes publish real v3 levels and track TP/SL without an external hi
   await assert.rejects(
     db.query("select wg_market_poll()"),
     /permission denied/,
+  );
+  await assert.rejects(
+    db.query("select wg_market_risk_limit_enabled()"),
+    /permission denied/,
+  );
+});
+
+test("013 removes the live cumulative stop without rewriting prior trades, events, quotas or delivery states", async (t) => {
+  const db = await database(t, { beforeRiskRemoval: true }),
+    at = Date.now();
+  await seed(db, history(Math.floor(at / minute) * minute).slice(0, -1));
+  await db.query("select wg_market_config($1,true)", [ADMIN]);
+  await db.exec("update wg_market_state set loss_used=9.6");
+  const old = (
+    await db.query("select wg_publish($1,$2::jsonb,'-1001') x", [
+      ADMIN,
+      JSON.stringify({
+        requestId: crypto.randomUUID(),
+        direction: "buy",
+        entry: 4000,
+        stop: 3990,
+        target: 4010,
+        targets: [4010],
+      }),
+    ])
+  ).rows[0].x;
+  await db.query("select wg_signal_status($1,$2,'cancelled','-1001')", [
+    ADMIN,
+    old.id,
+  ]);
+  assert.equal(
+    (
+      await db.query("select wg_market_cloud_quote($1::jsonb) x", [
+        JSON.stringify(payload(4033, at)),
+      ])
+    ).rows[0].x.reason,
+    "risk_halted",
+  );
+  const snapshot = async () =>
+    (
+      await db.query(
+        `select jsonb_build_object('signals',(select jsonb_agg(to_jsonb(s) order by id) from wg_signals s),'events',(select jsonb_agg(to_jsonb(e) order by id) from wg_signal_events e),'outbox',(select jsonb_agg(to_jsonb(o) order by id) from wg_outbox o),'allocations',(select jsonb_agg(to_jsonb(a) order by user_id,signal_id) from wg_allocations a),'profiles',(select jsonb_agg(to_jsonb(p) order by id) from wg_profiles p),'loss',(select loss_used from wg_market_state)) x`,
+      )
+    ).rows[0].x;
+  const before = await snapshot();
+  await db.exec(
+    await readFile(
+      new URL(
+        "../supabase/migrations/013_remove_cumulative_risk_halt.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(await snapshot(), before);
+  assert.equal(
+    (
+      await db.query("select wg_market_cloud_quote($1::jsonb) x", [
+        JSON.stringify(payload(4033, at + 1)),
+      ])
+    ).rows[0].x.reason,
+    "active_position",
+  );
+  assert.equal(
+    Number(
+      (await db.query("select loss_used from wg_market_state")).rows[0]
+        .loss_used,
+    ),
+    9.6,
   );
 });
 

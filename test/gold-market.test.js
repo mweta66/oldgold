@@ -232,6 +232,8 @@ async function database(
           "009_new_signals_only.sql",
           "010_telegram_sending_switch.sql",
           "011_market_structure_levels.sql",
+          "012_cloud_market_polling.sql",
+          "013_remove_cumulative_risk_halt.sql",
         ]
       : []),
   ])
@@ -822,7 +824,7 @@ test("005 to 006 upgrade preserves a live v1 position, its deliveries, allocatio
   );
 });
 
-test("pause, reference loss budget and warmup all prevent new signals without stopping quote collection", async (t) => {
+test("publication pause and incomplete history still block signals without a cumulative percentage gate", async (t) => {
   const f = await database(t),
     { db } = f;
   await db.exec("update wg_settings set paused=true");
@@ -831,7 +833,13 @@ test("pause, reference loss budget and warmup all prevent new signals without st
     "update wg_settings set paused=false; update wg_market_state set loss_used=9.6",
   );
   f.setQuote(4033.1);
-  assert.equal((await f.run()).reason, "risk_halted");
+  await db.exec(
+    "delete from wg_market_quotes where quote_at<now()-interval '1 hour'",
+  );
+  const remaining = (
+    await db.query("select count(*)::int n from wg_market_quotes")
+  ).rows[0].n;
+  assert.equal((await f.run()).reason, "warming_up");
   assert.equal(
     (await db.query("select count(*)::int as n from wg_signals")).rows[0].n,
     0,
@@ -839,13 +847,28 @@ test("pause, reference loss budget and warmup all prevent new signals without st
   assert.equal(
     (await db.query("select count(*)::int as n from wg_market_quotes")).rows[0]
       .n,
-    332,
+    remaining + 1,
   );
-  await db.exec(
-    "update wg_market_state set loss_used=0; delete from wg_market_quotes where quote_at<now()-interval '1 hour'",
-  );
+  await db.exec("update wg_market_state set loss_used=1000");
   f.setQuote(4033.2);
   assert.equal((await f.run()).reason, "warming_up");
+});
+
+test("legacy cumulative losses never prevent an otherwise valid JavaScript-worker publication", async (t) => {
+  const f = await database(t);
+  await f.db.exec("update wg_market_state set loss_used=10000");
+  assert.equal((await f.run()).reason, "active_position");
+  assert.equal(
+    (await f.db.query("select count(*)::int n from wg_signals")).rows[0].n,
+    1,
+  );
+  assert.equal(
+    Number(
+      (await f.db.query("select loss_used from wg_market_state")).rows[0]
+        .loss_used,
+    ),
+    10000,
+  );
 });
 
 test("cloud market endpoints require job secret or administrator and never disclose the worker lease", async (t) => {
@@ -861,6 +884,9 @@ test("cloud market endpoints require job secret or administrator and never discl
   const info = await f.request("/api/admin/market", { auth: admin });
   assert.equal(info.status, 200);
   assert.equal(info.body.source, "GOLDAPI:XAUUSD");
+  assert.equal(info.body.cumulativeRiskLimitEnabled, false);
+  assert.equal(info.body.lossBudgetLimit, undefined);
+  assert.equal(info.body.riskPerSignal, undefined);
   assert.doesNotMatch(
     JSON.stringify(info.body),
     /lease|service_role|test-server-secret/,

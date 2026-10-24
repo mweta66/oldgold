@@ -30,7 +30,7 @@ const assert = (condition, code) => {
 };
 
 export function migrationBatch(files) {
-  assert(files.length === 12, "MIGRATION_COUNT_INVALID");
+  assert(files.length === 13, "MIGRATION_COUNT_INVALID");
   assert(
     files.every(
       (file, index) =>
@@ -48,13 +48,14 @@ export function migrationBatch(files) {
           "010",
           "011",
           "012",
+          "013",
         ][index],
     ),
     "MIGRATION_ORDER_INVALID",
   );
   const records = [];
   const statements = files.map(({ version, sql }) => {
-    assert(/^(00[1-9]|01[012])$/.test(version), "MIGRATION_VERSION_INVALID");
+    assert(/^(00[1-9]|01[0-3])$/.test(version), "MIGRATION_VERSION_INVALID");
     assert(
       (sql.match(/^begin;[ \t]*$/gm) || []).length === 1 &&
         (sql.match(/^commit;[ \t]*$/gm) || []).length === 1,
@@ -126,6 +127,7 @@ export async function activateCloud(
         ["010", "010_telegram_sending_switch.sql"],
         ["011", "011_market_structure_levels.sql"],
         ["012", "012_cloud_market_polling.sql"],
+        ["013", "013_remove_cumulative_risk_halt.sql"],
       ].map(([version, file]) => ({
         version,
         sql: readFileSync(
@@ -398,7 +400,8 @@ export async function activateCloud(
        exists(select 1 from pg_trigger where tgrelid='public.wg_outbox'::regclass and tgname='wg_telegram_new_signals_only' and tgenabled='O')) as telegram_cutover_ready,
       (to_regprocedure('public.wg_telegram_sending(uuid,boolean)') is not null and exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_settings' and column_name='telegram_paused')) as telegram_switch_ready,
       (to_regprocedure('public.wg_market_structure(timestamptz,text,numeric)') is not null and exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_signals' and column_name='market_levels')) as market_structure_ready,
-      (to_regprocedure('public.wg_market_poll()') is not null and exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_market_state' and column_name='sampling_seconds')) as cloud_poller_ready`);
+      (to_regprocedure('public.wg_market_poll()') is not null and exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_market_state' and column_name='sampling_seconds')) as cloud_poller_ready,
+      to_regprocedure('public.wg_market_risk_limit_enabled()') is not null as unlimited_market_ready`);
     assert(
       Number(schema[0]?.private_tables) === requiredTables.length &&
         Number(schema[0]?.browser_readable) === 0 &&
@@ -411,7 +414,8 @@ export async function activateCloud(
         schema[0]?.telegram_cutover_ready &&
         schema[0]?.telegram_switch_ready &&
         schema[0]?.market_structure_ready &&
-        schema[0]?.cloud_poller_ready,
+        schema[0]?.cloud_poller_ready &&
+        schema[0]?.unlimited_market_ready,
       "SCHEMA_SECURITY_CHECK_FAILED",
     );
     report.schemaReady = true;
