@@ -32,6 +32,7 @@ const tables = [
   "wg_market_state",
   "wg_market_quotes",
   "wg_telegram_threads",
+  "wg_market_poller",
 ];
 const files = () =>
   [
@@ -44,6 +45,9 @@ const files = () =>
     "007_optional_manual_reference.sql",
     "008_telegram_replies.sql",
     "009_new_signals_only.sql",
+    "010_telegram_sending_switch.sql",
+    "011_market_structure_levels.sql",
+    "012_cloud_market_polling.sql",
   ].map((name) => ({
     version: name.slice(0, 3),
     sql: readFileSync(
@@ -96,7 +100,7 @@ function fixture(options = {}) {
         if (sql.includes("as private_tables"))
           return json([
             {
-              private_tables: 12,
+              private_tables: 13,
               browser_readable: options.unsafe ? 1 : 0,
               events_ready: true,
               history_ready: true,
@@ -105,6 +109,9 @@ function fixture(options = {}) {
               manual_reference_ready: !options.missingOptionalReference,
               telegram_replies_ready: !options.missingTelegramReplies,
               telegram_cutover_ready: !options.missingTelegramCutover,
+              telegram_switch_ready: !options.missingTelegramSwitch,
+              market_structure_ready: !options.missingMarketStructure,
+              cloud_poller_ready: !options.missingCloudPoller,
             },
           ]);
         if (sql.startsWith("select (select decrypted_secret")) {
@@ -430,6 +437,25 @@ test("activation refuses Telegram workers without the durable new-trades-only cu
         c.url.pathname.endsWith("/env"),
     ),
   );
+});
+
+test("activation refuses to deploy without the switch, market structure or native cloud polling schema", async () => {
+  for (const flag of [
+    "missingTelegramSwitch",
+    "missingMarketStructure",
+    "missingCloudPoller",
+  ]) {
+    const f = fixture({ [flag]: true }),
+      r = await f.run();
+    assert.equal(r.error, "SCHEMA_SECURITY_CHECK_FAILED");
+    assert(
+      !f.calls.some(
+        (c) =>
+          c.url.pathname.endsWith("/deployments") ||
+          c.url.pathname.endsWith("/env"),
+      ),
+    );
+  }
 });
 
 test("administrator bootstrap uses secure configured credentials, forces password replacement and cleans up only its own failed new account", async () => {

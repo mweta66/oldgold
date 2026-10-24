@@ -19,6 +19,7 @@ const requiredTables = [
   "wg_market_state",
   "wg_market_quotes",
   "wg_telegram_threads",
+  "wg_market_poller",
 ];
 const sqlString = (value) => `'${value.replaceAll("'", "''")}'`;
 const fail = (code) => {
@@ -29,18 +30,31 @@ const assert = (condition, code) => {
 };
 
 export function migrationBatch(files) {
-  assert(files.length === 9, "MIGRATION_COUNT_INVALID");
+  assert(files.length === 12, "MIGRATION_COUNT_INVALID");
   assert(
     files.every(
       (file, index) =>
         file.version ===
-        ["001", "002", "003", "004", "005", "006", "007", "008", "009"][index],
+        [
+          "001",
+          "002",
+          "003",
+          "004",
+          "005",
+          "006",
+          "007",
+          "008",
+          "009",
+          "010",
+          "011",
+          "012",
+        ][index],
     ),
     "MIGRATION_ORDER_INVALID",
   );
   const records = [];
   const statements = files.map(({ version, sql }) => {
-    assert(/^00[123456789]$/.test(version), "MIGRATION_VERSION_INVALID");
+    assert(/^(00[1-9]|01[012])$/.test(version), "MIGRATION_VERSION_INVALID");
     assert(
       (sql.match(/^begin;[ \t]*$/gm) || []).length === 1 &&
         (sql.match(/^commit;[ \t]*$/gm) || []).length === 1,
@@ -109,6 +123,9 @@ export async function activateCloud(
         ["007", "007_optional_manual_reference.sql"],
         ["008", "008_telegram_replies.sql"],
         ["009", "009_new_signals_only.sql"],
+        ["010", "010_telegram_sending_switch.sql"],
+        ["011", "011_market_structure_levels.sql"],
+        ["012", "012_cloud_market_polling.sql"],
       ].map(([version, file]) => ({
         version,
         sql: readFileSync(
@@ -378,7 +395,10 @@ export async function activateCloud(
        to_regprocedure('public.wg_telegram_mark_sent(bigint,uuid,bigint,bigint)') is not null and
        (select count(*) from information_schema.columns where table_schema='public' and table_name='wg_outbox' and column_name in ('telegram_message_id','reply_to_message_id'))=2) as telegram_replies_ready,
       (exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_signals' and column_name='telegram_suppressed') and
-       exists(select 1 from pg_trigger where tgrelid='public.wg_outbox'::regclass and tgname='wg_telegram_new_signals_only' and tgenabled='O')) as telegram_cutover_ready`);
+       exists(select 1 from pg_trigger where tgrelid='public.wg_outbox'::regclass and tgname='wg_telegram_new_signals_only' and tgenabled='O')) as telegram_cutover_ready,
+      (to_regprocedure('public.wg_telegram_sending(uuid,boolean)') is not null and exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_settings' and column_name='telegram_paused')) as telegram_switch_ready,
+      (to_regprocedure('public.wg_market_structure(timestamptz,text,numeric)') is not null and exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_signals' and column_name='market_levels')) as market_structure_ready,
+      (to_regprocedure('public.wg_market_poll()') is not null and exists(select 1 from information_schema.columns where table_schema='public' and table_name='wg_market_state' and column_name='sampling_seconds')) as cloud_poller_ready`);
     assert(
       Number(schema[0]?.private_tables) === requiredTables.length &&
         Number(schema[0]?.browser_readable) === 0 &&
@@ -388,7 +408,10 @@ export async function activateCloud(
         schema[0]?.market_ready &&
         schema[0]?.manual_reference_ready &&
         schema[0]?.telegram_replies_ready &&
-        schema[0]?.telegram_cutover_ready,
+        schema[0]?.telegram_cutover_ready &&
+        schema[0]?.telegram_switch_ready &&
+        schema[0]?.market_structure_ready &&
+        schema[0]?.cloud_poller_ready,
       "SCHEMA_SECURITY_CHECK_FAILED",
     );
     report.schemaReady = true;

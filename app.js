@@ -34,6 +34,8 @@ let themeDirty = false,
   themeSaving = false,
   publishing = false,
   savingUser = false;
+let telegramSwitchBusy = false,
+  telegramRevision = 0;
 const formLocks = new Map();
 const signalActions = new Map();
 let signalsRenderKey = "";
@@ -428,6 +430,13 @@ function clearSignals() {
 
 function setSession(payload) {
   generation++;
+  telegramSwitchBusy = false;
+  telegramRevision++;
+  $("#toggleTelegramSending").disabled = true;
+  $("#toggleTelegramSending").textContent = "جارٍ قراءة الحالة…";
+  $("#toggleTelegramSending").setAttribute("aria-checked", "false");
+  $("#telegramSendingStatus").textContent = "جارٍ قراءة حالة الإرسال…";
+  message("#telegramSendingMessage", "");
   for (const selector of formLocks.keys()) unlockForm(selector);
   publishing = false;
   savingUser = false;
@@ -647,6 +656,31 @@ function signalCard(signal) {
   );
   wrap.append(head, levels, meta);
   if (signal.marketStrategy) {
+    if (signal.levelsBasis?.method === "confirmed-sampled-pivots-v1") {
+      const basis = signal.levelsBasis;
+      const explanation = element("details", undefined, "small");
+      explanation.append(element("summary", "لماذا هذه الأهداف وهذا الوقف؟"));
+      explanation.append(
+        element(
+          "p",
+          `الوقف خلف ${signal.direction === "buy" ? "قاع" : "قمة"} مؤكدة عند ${price(basis.stopSwing.price)} · ${date(basis.stopSwing.time)}، مع هامش تقلب ${price(basis.buffer)}.`,
+        ),
+      );
+      explanation.append(
+        element(
+          "p",
+          `الأهداف قبل مستويات ${signal.direction === "buy" ? "مقاومة" : "دعم"} مؤكدة: ${basis.targetSwings.map((p) => price(p.price)).join(" · ")}. العائد المرجعي إلى المخاطرة لأول هدف ${Number(basis.firstRewardRisk).toFixed(2)}.`,
+        ),
+      );
+      explanation.append(
+        element(
+          "p",
+          "من القراءات المرجعية المسجّلة للدقائق المكتملة، وليس قمم وقيعان شموع وسيط أو ATR. لا تُعدّل مستويات الصفقة المنشورة بأثر رجعي.",
+          "muted",
+        ),
+      );
+      wrap.append(explanation);
+    }
     wrap.append(
       element(
         "p",
@@ -1080,6 +1114,28 @@ function editUser(account) {
 
 function renderAdmin() {
   if (!overview || user?.role !== "admin") return;
+  const sending = overview.telegram.sendingEnabled,
+    known = typeof sending === "boolean";
+  $("#toggleTelegramSending").disabled = telegramSwitchBusy || !known;
+  $("#toggleTelegramSending").textContent = telegramSwitchBusy
+    ? "جارٍ حفظ الحالة…"
+    : !known
+      ? "حالة الإرسال غير مؤكدة"
+      : sending
+        ? "⏸ إيقاف إرسال البوت"
+        : "▶ تشغيل إرسال البوت";
+  $("#toggleTelegramSending").className = sending
+    ? "danger-btn"
+    : "primary-btn";
+  $("#toggleTelegramSending").setAttribute(
+    "aria-checked",
+    String(sending === true),
+  );
+  $("#telegramSendingStatus").textContent = !known
+    ? "تعذر تأكيد حالة إرسال البوت؛ حدّث الاتصال."
+    : sending
+      ? "🟢 إرسال رسائل البوت مفعّل"
+      : "⏸ إرسال رسائل البوت متوقف بأمر المدير";
   if (THEMES.includes(overview.theme)) {
     if (!themeDirty && !themeSaving) $("#siteTheme").value = overview.theme;
     if (!themeSaving) applyTheme(overview.theme);
@@ -1215,11 +1271,15 @@ function renderMarket() {
       "انتظار اكتمال آخر 30 دقيقة بعد انقطاع؛ البيانات السابقة محفوظة",
     awaiting_fresh_quote: "انتظار سعر حديث؛ الإشارات الجديدة متوقفة",
     no_setup: "المتابعة تعمل؛ لا توجد فرصة مطابقة للقواعد الآن",
+    no_structure:
+      "لا توجد قمم وقيعان مؤكدة مناسبة للوقف والأهداف؛ لم تُنشأ إشارة بديلة",
+    poor_reward:
+      "أقرب دعم أو مقاومة لا يوفّر عائدًا مناسبًا مقارنة بالوقف؛ لم تُنشأ إشارة",
     active_position: "توجد صفقة قيد المتابعة",
     paused: "النشر متوقف من الإعداد العام",
     disabled: "الإشارات الآلية متوقفة من المدير",
     cooldown: "فترة انتظار بعد إغلاق المتابعة",
-    risk_halted: "توقف النشر: استُهلكت ميزانية الخسارة المرجعية",
+    risk_halted: "توقف النشر: المتبقي من ميزانية الخسارة لا يكفي لإشارة جديدة",
     ready: "التحليل جاهز",
   };
   $("#marketStatus").replaceChildren(
@@ -1228,6 +1288,11 @@ function renderMarket() {
       `${market.sourceName} · ${market.enabled ? "النشر الآلي مفعّل" : "النشر الآلي غير مفعّل"}`,
     ),
     element("p", labels[market.reason] || "جارٍ فحص المصدر", "message"),
+    element(
+      "p",
+      `فحص المصدر كل نحو ${market.samplingSeconds ?? 30} ثوانٍ. تكرار الفحص لا يضمن سعرًا جديدًا، ووقت وصول Telegram يشمل زمن الشبكة والطابور.`,
+      "small muted",
+    ),
     element(
       "p",
       market.fresh && Number.isFinite(market.price)
@@ -1338,6 +1403,7 @@ async function refreshOnce() {
         usersPage: String(usersPage),
         usersSearch,
       });
+      const sendingRevision = telegramRevision;
       const result = await api(
         usersPage === 1 && !usersSearch
           ? "/api/admin/overview"
@@ -1345,6 +1411,7 @@ async function refreshOnce() {
       );
       if (version !== generation) return;
       if (
+        sendingRevision === telegramRevision &&
         query.get("usersPage") === String(usersPage) &&
         query.get("usersSearch") === usersSearch
       ) {
@@ -1769,6 +1836,48 @@ $("#pauseButton").addEventListener("click", async () => {
     if (version === generation) message("#adminMessage", err.message);
   } finally {
     if (version === generation) $("#pauseButton").disabled = false;
+  }
+});
+$("#toggleTelegramSending").addEventListener("click", async () => {
+  if (
+    user?.role !== "admin" ||
+    telegramSwitchBusy ||
+    typeof overview?.telegram?.sendingEnabled !== "boolean"
+  )
+    return;
+  const version = generation,
+    enabled = !overview.telegram.sendingEnabled;
+  telegramSwitchBusy = true;
+  telegramRevision++;
+  renderAdmin();
+  message("#telegramSendingMessage", "");
+  try {
+    const result = await api("/api/admin/telegram/sending", {
+      method: "PATCH",
+      data: { enabled },
+    });
+    if (version !== generation) return;
+    if (typeof result.enabled !== "boolean")
+      throw new Error("تعذر تأكيد حالة الإرسال؛ حدّث الاتصال.");
+    telegramRevision++;
+    overview.telegram.sendingEnabled = result.enabled;
+    message(
+      "#telegramSendingMessage",
+      result.enabled
+        ? "تم تشغيل إرسال البوت. لا تُعاد الرسائل الملغاة أثناء الإيقاف."
+        : "تم إيقاف رسائل البوت؛ الصفقات ومتابعة السوق على الموقع مستمرة.",
+    );
+  } catch (err) {
+    if (version !== generation) return;
+    telegramRevision++;
+    overview.telegram.sendingEnabled = undefined;
+    message("#telegramSendingMessage", err.message);
+  } finally {
+    if (version === generation) {
+      telegramSwitchBusy = false;
+      renderAdmin();
+      await refresh();
+    }
   }
 });
 $("#checkTelegram").addEventListener("click", async () => {

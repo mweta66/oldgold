@@ -45,6 +45,59 @@ async function brandedPage(t, options = {}, makeFixture = fixture) {
   return { f, context, page, chartRequests };
 }
 
+test("admin Telegram switch persists without pausing site signals and locks during mutations", async (t) => {
+  const { f, page, context } = await brandedPage(t, {
+    viewport: { width: 390, height: 844 },
+  });
+  await page.goto(f.origin);
+  assert.equal(await page.locator("#toggleTelegramSending").isVisible(), false);
+  await page.locator("#loginButton").click();
+  await page.locator("#loginEmail").fill(ADMIN_EMAIL);
+  await page.locator("#loginPassword").fill(ADMIN_PASSWORD);
+  await page.locator("#submitLogin").click();
+  const button = page.getByRole("switch", { name: "إرسال رسائل البوت" });
+  await page.waitForFunction(
+    () => document.querySelector("#toggleTelegramSending").disabled === false,
+  );
+  assert.equal(await button.getAttribute("aria-checked"), "true");
+  let release;
+  const gate = new Promise((r) => (release = r));
+  t.after(() => release());
+  await context.route("**/api/admin/telegram/sending", async (route) => {
+    await gate;
+    await route.continue();
+  });
+  await button.click();
+  assert.equal(await button.isDisabled(), true);
+  release();
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector("#toggleTelegramSending")
+        .getAttribute("aria-checked") === "false" &&
+      !document.querySelector("#toggleTelegramSending").disabled,
+  );
+  assert.match(await page.locator("#pauseButton").textContent(), /إيقاف نشر/);
+  await page.reload();
+  await page.waitForFunction(
+    () => document.querySelector("#toggleTelegramSending").disabled === false,
+  );
+  assert.equal(await button.getAttribute("aria-checked"), "false");
+  await button.click();
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector("#toggleTelegramSending")
+        .getAttribute("aria-checked") === "true" &&
+      !document.querySelector("#toggleTelegramSending").disabled,
+  );
+  const body = await (
+    await page.request.get(f.origin + "/api/admin/overview")
+  ).json();
+  assert.equal(body.telegram.sendingEnabled, true);
+  assert.equal(body.paused, false);
+});
+
 test("administration contact opens the current owner's chat for guests and both account roles, across mobile sizes and themes, even without the API or JavaScript", async (t) => {
   const { f, page, context } = await brandedPage(t, {}, () => cloudFixture(t));
   await context.route("https://t.me/weta993", (route) =>
@@ -237,6 +290,7 @@ test("cloud browser separates sampled gold warmup, unresolved history and source
   );
   Object.assign(f.tables.wg_market_state[0], {
     reason: "no_setup",
+    sampling_seconds: 3,
     analysis: {
       observed: 299,
       recent: 30,
@@ -253,6 +307,10 @@ test("cloud browser separates sampled gold warmup, unresolved history and source
     /لا توجد فرصة مطابقة/,
   );
   assert.match(await page.locator("#marketStatus").textContent(), /299 \/ 300/);
+  assert.match(
+    await page.locator("#marketStatus").textContent(),
+    /كل نحو 3 ثوان/,
+  );
 });
 
 test("production-shaped Vercel HTTPS browser login uses the real Supabase handler, secure cookies and account isolation", async (t) => {

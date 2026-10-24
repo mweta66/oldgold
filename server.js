@@ -519,6 +519,10 @@ export async function createApp(options = {}) {
           .map((account) => publicUser(account, now())),
         usersPagination: { ...members, total },
         telegram: {
+          sendingEnabled:
+            db
+              .prepare("SELECT value FROM settings WHERE key='telegram_paused'")
+              .get()?.value === "false",
           configured: telegram.configured,
           adminGroupConfigured: Boolean(groupChatId(env)),
           groupConfigured: Boolean(groupChatId(env)),
@@ -542,6 +546,26 @@ export async function createApp(options = {}) {
           )
           .all(),
       });
+    }
+    if (method === "PATCH" && path === "/api/admin/telegram/sending") {
+      const data = await bodyOf(req);
+      if (typeof data.enabled !== "boolean")
+        throw error(400, "اختر تشغيل إرسال البوت أو إيقافه.");
+      const changed = transaction(db, () => {
+        const before = db
+          .prepare("SELECT value FROM settings WHERE key='telegram_paused'")
+          .get()?.value;
+        if (before === String(!data.enabled)) return false;
+        db.prepare(
+          "UPDATE settings SET value=? WHERE key='telegram_paused'",
+        ).run(String(!data.enabled));
+        db.exec(
+          "UPDATE outbox SET state='cancelled' WHERE state IN ('pending','processing','failed')",
+        );
+        audit(admin, "telegram.sending", data.enabled ? "enabled" : "paused");
+        return true;
+      });
+      return send({ enabled: data.enabled, changed });
     }
     if (method === "POST" && path === "/api/admin/telegram/check") {
       try {
