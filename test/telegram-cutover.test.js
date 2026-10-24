@@ -175,7 +175,7 @@ test("SQLite cutover survives restart, cancels old queues and root-backed TP/SL,
   // Remove only the new release's schema to model an actual pre-009 database.
   const legacy = new DatabaseSync(file);
   legacy.exec(
-    "drop trigger telegram_new_signals_only; drop trigger telegram_new_signals_only_retry; alter table signals drop column telegram_suppressed;",
+    "drop trigger telegram_new_signals_only; drop trigger telegram_new_signals_only_retry; drop trigger telegram_muted_signal; alter table signals drop column telegram_suppressed;",
   );
   legacy.close();
   db = openStore(file);

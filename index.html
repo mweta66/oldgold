@@ -176,9 +176,9 @@
           <h2>متابعة السوق الآلية</h2>
           <div id="marketStatus" role="status"></div>
           <p class="small muted">
-            Gold API · قراءات سعر مرجعي كل نحو 30 ثانية، وليست شموع وسيط أو سعر
-            تنفيذ. الإشارات تجريبية وقد تفوت حركة بين القراءات. لا توجد صفقات
-            تاريخية مصطنعة ولا ضمان أرباح أو حد خسارة فعلي.
+            Gold API · قراءات سعر مرجعي متقطعة، وليست شموع وسيط أو سعر تنفيذ.
+            الإشارات تجريبية وقد تفوت حركة بين القراءات. لا توجد صفقات تاريخية
+            مصطنعة ولا ضمان أرباح أو حد خسارة فعلي.
           </p>
         </article>
         <div class="workspace-grid" id="signalWorkspace">
@@ -705,6 +705,34 @@
           <div id="operationsReport" role="status"></div>
         </article>
         <article class="panel telegram-panel">
+          <div class="bot-controls">
+            <div>
+              <p class="eyebrow">TELEGRAM CONTROL</p>
+              <h3>التحكم في إرسال البوت</h3>
+              <p id="telegramSendingStatus" role="status" class="small muted">
+                جارٍ قراءة حالة الإرسال…
+              </p>
+            </div>
+            <button
+              id="toggleTelegramSending"
+              type="button"
+              class="secondary-btn"
+              role="switch"
+              aria-label="إرسال رسائل البوت"
+              aria-checked="false"
+              aria-describedby="telegramSendingHelp"
+              disabled
+            >
+              جارٍ قراءة الحالة…
+            </button>
+          </div>
+          <p id="telegramSendingHelp" class="small muted">
+            يتحكم في رسائل الإشارات والأهداف والوقف للجروب والخاص فقط؛ متابعة
+            السوق والصفقات على الموقع لا تتوقف. الرسائل أثناء الإيقاف تُلغى ولا
+            تُرسل لاحقًا، والصفقات المنشورة أثناء الإيقاف لا تبدأ إرسال تحديثات
+            بعد التشغيل. رسالة بدأ إرسالها قبل الإيقاف قد تصل.
+          </p>
+          <p id="telegramSendingMessage" class="small" role="status"></p>
           <div class="panel-head">
             <h3>جروب الإشارات المغلق وTelegram</h3>
             <div class="button-row">

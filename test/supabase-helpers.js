@@ -41,7 +41,9 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
     wg_outbox: [],
     wg_signal_events: [],
     wg_audit: [],
-    wg_settings: [{ id: 1, theme: "gold", paused: false }],
+    wg_settings: [
+      { id: 1, theme: "gold", paused: false, telegram_paused: false },
+    ],
     wg_telegram_links: [],
     wg_market_state: [
       {
@@ -53,6 +55,9 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
       },
     ],
     wg_market_quotes: [],
+    wg_market_poller: [
+      { id: 1, enabled: false, last_processed_at: null, last_error: null },
+    ],
     wg_telegram_threads: [],
   };
   const calls = [],
@@ -256,6 +261,20 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
       }
       if (name === "wg_settings_update")
         Object.assign(tables.wg_settings[0], data.p_data);
+      if (name === "wg_telegram_sending") {
+        const changed =
+          tables.wg_settings[0].telegram_paused === data.p_enabled;
+        tables.wg_settings[0].telegram_paused = !data.p_enabled;
+        if (changed)
+          tables.wg_outbox
+            .filter((r) =>
+              ["pending", "processing", "failed"].includes(r.state),
+            )
+            .forEach((r) =>
+              Object.assign(r, { state: "cancelled", lease_id: null }),
+            );
+        return json({ enabled: data.p_enabled, changed });
+      }
       if (name === "wg_market_config")
         tables.wg_market_state[0].enabled = data.p_enabled;
       if (name === "wg_member_update")
@@ -333,6 +352,12 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
         404,
       );
     assert.ok(rows, `Unexpected provider endpoint ${url.pathname}`);
+    if (
+      method === "GET" &&
+      name === "wg_telegram_threads" &&
+      telegramPolicy.beforeRootRead
+    )
+      await telegramPolicy.beforeRootRead();
     if (method === "POST") {
       rows.push(data);
       return new Response(null, { status: 201 });

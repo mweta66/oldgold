@@ -29,10 +29,20 @@ const response = (value) =>
     headers: { "content-type": "application/json" },
   });
 const quotes = (at, count = 331) =>
-  Array.from({ length: count }, (_, i) => ({
-    at: at - (count - 1 - i) * MINUTE,
-    price: 4000 + i / 10,
-  }));
+  Array.from({ length: count }, (_, i) => {
+    const age = count - 1 - i,
+      last = 4000 + (count - 1) / 10;
+    const peak = { 230: 32, 180: 17, 130: 9 };
+    return {
+      at: at - age * MINUTE,
+      price:
+        age === 30
+          ? last - 6
+          : peak[age] !== undefined
+            ? last + peak[age]
+            : 4000 + i / 10,
+    };
+  });
 
 test("Gold API adapter uses only its public reference endpoint, validates identity and freshness, and redacts errors", async () => {
   const now = Date.now();
@@ -216,6 +226,14 @@ async function database(
     "005_gold_market.sql",
     ...(rolling ? ["006_rolling_market_window.sql"] : []),
     "007_optional_manual_reference.sql",
+    ...(rolling
+      ? [
+          "008_telegram_replies.sql",
+          "009_new_signals_only.sql",
+          "010_telegram_sending_switch.sql",
+          "011_market_structure_levels.sql",
+        ]
+      : []),
   ])
     await db.exec(
       await readFile(
@@ -401,7 +419,7 @@ test("real PostgreSQL market lease, atomic allocation, immutable TP event snapsh
     created_at: new Date().toISOString(),
   });
   assert.match(msg, /GOLDAPI:XAUUSD/);
-  assert.match(msg, /30 ثانية/);
+  assert.match(msg, /سعر مرجعي متقطع/);
   assert.doesNotMatch(msg, /OANDA/);
   assert.equal(
     (await db.query("select used from wg_profiles where role='member'")).rows[0]
@@ -437,6 +455,51 @@ test("real PostgreSQL market lease, atomic allocation, immutable TP event snapsh
   }
 });
 
+test("v3 refuses forged levels atomically and stores independently recomputed market evidence on a valid publication", async (t) => {
+  const f = await database(t),
+    context = await f.rpc("wg_market_claim", {}),
+    quote = f.quote;
+  const analysis = goldDecision([...context.quotes, quote], quote);
+  assert.equal(analysis.reason, "ready");
+  const count = (
+    await f.db.query("select count(*)::int n from wg_market_quotes")
+  ).rows[0].n;
+  await assert.rejects(
+    f.rpc("wg_market_commit", {
+      p_lease: context.lease,
+      p_quote: { at: new Date(quote.at).toISOString(), price: quote.price },
+      p_plan: {
+        ...analysis,
+        decision: { ...analysis.decision, stop: analysis.decision.stop - 0.01 },
+      },
+      p_group_chat: "-1001",
+    }),
+    /مستويات الدعم والمقاومة/,
+  );
+  assert.equal(
+    (await f.db.query("select count(*)::int n from wg_signals")).rows[0].n,
+    0,
+  );
+  assert.equal(
+    (await f.db.query("select count(*)::int n from wg_market_quotes")).rows[0]
+      .n,
+    count,
+  );
+  assert.equal(
+    (await f.db.query("select used from wg_profiles where role='member'"))
+      .rows[0].used,
+    0,
+  );
+  await f.rpc("wg_market_failure", {
+    p_lease: context.lease,
+    p_code: "GOLD_WORKER_FAILED",
+  });
+  await f.run();
+  const signal = (await f.db.query("select market_levels from wg_signals"))
+    .rows[0];
+  assert.deepEqual(signal.market_levels, analysis.decision.levelsBasis);
+});
+
 test("a sell emits TP1 then TP2 exactly once at observed thresholds and cannot emit another goal after SL", async (t) => {
   // Isolated PostgreSQL fixture, not a replay or a publication to the real group.
   const f = await database(t, { sell: true }),
@@ -444,25 +507,27 @@ test("a sell emits TP1 then TP2 exactly once at observed thresholds and cannot e
   await f.run();
   const signal = (await db.query("select * from wg_signals")).rows[0];
   assert.equal(signal.direction, "sell");
-  assert.deepEqual(signal.targets.map(Number), [4053.94, 4049.88, 4045.82]);
-  f.setQuote(4052.899902);
+  const goals = signal.targets.map(Number);
+  assert.deepEqual(goals, [4049.05, 4041.05, 4026.05]);
+  assert.equal(signal.market_levels.method, "confirmed-sampled-pivots-v1");
+  f.setQuote(goals[0] - 0.1);
   await f.run();
-  f.setQuote(4051.600098);
+  f.setQuote(goals[0] - 0.2);
   await f.run();
   assert.equal(
     (await db.query("select targets_hit from wg_signals")).rows[0].targets_hit,
     1,
   );
-  f.setQuote(4049.88);
+  f.setQuote(goals[1]);
   await f.run();
   assert.equal(
     (await db.query("select targets_hit from wg_signals")).rows[0].targets_hit,
     2,
   );
   assert.equal((await f.run()).duplicate, true);
-  f.setQuote(4062.06);
+  f.setQuote(Number(signal.stop));
   await f.run();
-  f.setQuote(4045);
+  f.setQuote(goals[2]);
   await f.run();
   const events = (
     await db.query(
@@ -726,6 +791,18 @@ test("005 to 006 upgrade preserves a live v1 position, its deliveries, allocatio
       "utf8",
     ),
   );
+  for (const file of [
+    "008_telegram_replies.sql",
+    "009_new_signals_only.sql",
+    "010_telegram_sending_switch.sql",
+    "011_market_structure_levels.sql",
+  ])
+    await db.exec(
+      await readFile(
+        new URL(`../supabase/migrations/${file}`, import.meta.url),
+        "utf8",
+      ),
+    );
   await f.run();
   assert.deepEqual(
     (await db.query("select id,market_strategy from wg_signals")).rows,
