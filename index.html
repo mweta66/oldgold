@@ -223,7 +223,7 @@
           </p>
           <form id="historyForm" class="history-filters">
             <div class="field">
-              <label for="historyFilter">تصفية الحالة</label
+              <label for="historyFilter">تصفية حالة المتابعة</label
               ><select id="historyFilter">
                 <option value="all">كل الحالات</option>
                 <option value="pending">معلقة</option>
@@ -261,7 +261,13 @@
           </form>
           <p id="historySummary" class="small muted" role="status"></p>
           <p id="historyError" class="message error" role="alert" hidden></p>
-          <div id="history" class="empty-state">
+          <div
+            id="history"
+            class="empty-state"
+            tabindex="0"
+            role="region"
+            aria-label="سجل الصفقات"
+          >
             سجّل الدخول لعرض سجل حسابك.
           </div>
           <div class="history-pagination">
