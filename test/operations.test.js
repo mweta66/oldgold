@@ -127,3 +127,34 @@ test("member filters validate page and search; SQLite admin pages search literal
   assert.equal(report.body.market.automaticSignals, false);
   assert.equal((await f.request("/api/health")).body.provider, "sqlite");
 });
+
+test("operations never reports publication ready while a market gate blocks it", () => {
+  const market = {
+    enabled: true,
+    fresh: true,
+    progressMinutes: 300,
+    requiredMinutes: 300,
+  };
+  for (const reason of [
+    "history_gap",
+    "recent_gap",
+    "warming_up",
+    "active_position",
+    "cooldown",
+    "no_setup",
+    "paused",
+    "disabled",
+  ]) {
+    assert.equal(
+      operationsReport({}, [], [], Date.now(), { ...market, reason }).market
+        .automaticSignals,
+      false,
+      reason,
+    );
+  }
+  assert.equal(
+    operationsReport({}, [], [], Date.now(), { ...market, reason: "ready" })
+      .market.automaticSignals,
+    true,
+  );
+});
