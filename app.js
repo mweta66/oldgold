@@ -5,7 +5,7 @@ import {
   localInput,
   localInputToIso,
 } from "./time-zones.js";
-import { historyCsv } from "./trade-export.js";
+import { historyCsv, signalSucceeded, signalOutcome } from "./trade-export.js";
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 let user = null,
@@ -615,7 +615,11 @@ function signalCard(signal) {
       signal.direction === "buy" ? "شراء · Long" : "بيع · Short",
       `badge ${signal.direction}`,
     ),
-    element("span", statuses[signal.status], `badge ${signal.status}`),
+    element(
+      "span",
+      signalOutcome(signal) || statuses[signal.status],
+      `badge ${signalSucceeded(signal) ? "target" : signal.status}`,
+    ),
   );
   const levels = element("div", undefined, "levels");
   for (const [label, value, color] of [
@@ -654,6 +658,10 @@ function signalCard(signal) {
       `السعر المرجعي عند النشر: ${signal.referencePrice == null ? "غير مضاف" : price(signal.referencePrice)}`,
     ),
   );
+  if (signalSucceeded(signal))
+    meta.append(
+      element("span", `متابعة باقي الأهداف: ${statuses[signal.status]}`),
+    );
   wrap.append(head, levels, meta);
   if (signal.marketStrategy) {
     if (signal.levelsBasis?.method === "confirmed-sampled-pivots-v1") {
@@ -950,8 +958,8 @@ function renderHistory() {
     const row = element("tr");
     const state = element(
       "span",
-      statuses[signal.status],
-      `badge ${signal.status}`,
+      signalOutcome(signal) || statuses[signal.status],
+      `badge ${signalSucceeded(signal) ? "target" : signal.status}`,
     );
     const closed = [
       "target",
@@ -1391,7 +1399,7 @@ async function refreshOnce() {
         ? `${Math.round((result.stats.wins / result.stats.closed) * 100)}%`
         : "—";
       $("#winNote").textContent = result.stats.closed
-        ? `من ${result.stats.closed} إشارة مغلقة في ملخص آخر 90 يومًا (حتى 200 إشارة)`
+        ? `من ${result.stats.closed} إشارة بنتيجة مسجّلة (نجاح من TP1 أو إغلاق) في ملخص آخر 90 يومًا (حتى 200 إشارة)`
         : "لا توجد نتائج مغلقة بعد";
     } else {
       clearSignals();

@@ -1,3 +1,10 @@
+// Website outcome is independent of the remaining targets and tracking lifecycle.
+export const signalSucceeded = (signal) =>
+  signal.status === "target" ||
+  Number(signal.targetsHit ?? signal.targets_hit ?? 0) >= 1;
+export const signalOutcome = (signal) =>
+  signalSucceeded(signal) ? "نجاح · تحقق الهدف الأول" : null;
+
 // Quote every field and neutralize spreadsheet formulas in untrusted text.
 const cell = (value) => {
   let text = String(value ?? "");
@@ -21,7 +28,8 @@ export function historyCsv(signals, timeZone) {
       "Signal",
       "Source",
       "Direction",
-      "Status",
+      "Tracking status",
+      "Website outcome",
       "Entry",
       "SL",
       "TP (final)",
@@ -47,6 +55,7 @@ export function historyCsv(signals, timeZone) {
       signal.symbol,
       signal.direction,
       signal.status,
+      signalOutcome(signal) || signal.status,
       signal.entry,
       signal.stop,
       signal.target,

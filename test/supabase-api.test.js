@@ -1078,3 +1078,23 @@ test("Supabase preserves null optional references in protected signal/history re
     assert(response.body.signals[0].createdAt);
   }
 });
+
+test("website stats count TP1 immediately and retain success after a later stop", async (t) => {
+  const f = await fixture(t);
+  const admin = await f.login();
+  f.tables.wg_signals.push({
+    id: 91,
+    status: "open",
+    targets_hit: 1,
+    created_at: new Date().toISOString(),
+    targets: [101, 102],
+    target: 102,
+  });
+  let response = await f.request("/api/signals", { auth: admin });
+  assert.equal(response.body.stats.wins, 1);
+  assert.equal(response.body.stats.closed, 1);
+  f.tables.wg_signals[0].status = "stopped";
+  response = await f.request("/api/signals", { auth: admin });
+  assert.equal(response.body.stats.wins, 1);
+  assert.equal(response.body.signals[0].status, "stopped");
+});
