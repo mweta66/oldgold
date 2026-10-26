@@ -421,3 +421,33 @@ test("SQLite restart retains per-chat root ids and child replies without resendi
     1,
   );
 });
+
+test("two-hour time-limit updates are silent for group and private chat without creating anchors", async () => {
+  for (const user_id of [null, "member"]) {
+    const f = sender();
+    f.context.row.user_id = user_id;
+    f.context.event = { kind: "status" };
+    f.context.snapshot = {
+      ...source,
+      status: "unresolved",
+      market_resolution: "time_limit",
+    };
+    await assert.rejects(deliverSignalMessage(f.context), {
+      status: 410,
+      code: "TELEGRAM_TIME_LIMIT_SILENCED",
+    });
+    assert.equal(f.requests.length, 0);
+    assert.equal(f.acknowledgements.length, 0);
+  }
+});
+test("data-gap unresolved notifications remain deliverable", async () => {
+  const f = sender(100);
+  f.context.event = { kind: "status" };
+  f.context.snapshot = {
+    ...source,
+    status: "unresolved",
+    market_resolution: "data_gap",
+  };
+  await deliverSignalMessage(f.context);
+  assert.equal(f.requests.length, 1);
+});
