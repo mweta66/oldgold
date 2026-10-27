@@ -1,4 +1,4 @@
-"""Read-only MT5 price bridge. No login/password/order/account APIs are used."""
+"""Read-only MT5 price bridge. No credentials/orders or financial account data are sent."""
 import argparse
 import json
 import math
@@ -38,6 +38,10 @@ def load_config(path):
 def snapshot(mt5, config, now_ms):
     info = mt5.terminal_info()
     if info is None or not info.connected:
+        return None
+    # Check only the server identity; never serialize account_info or balances.
+    account = mt5.account_info()
+    if account is None or account.server != config["server"]:
         return None
     tick = mt5.symbol_info_tick(config["symbol"])
     if (tick is None or not all(math.isfinite(x) and x > 0 for x in (tick.bid, tick.ask))
