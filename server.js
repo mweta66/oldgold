@@ -1,3 +1,4 @@
+import { signalSucceeded } from "./trade-export.js";
 import http from "node:http";
 import { createBybitResearch } from "./lib/bybit-research.js";
 import { readFile } from "node:fs/promises";
@@ -374,8 +375,9 @@ export async function createApp(options = {}) {
                 "SELECT s.* FROM signals s JOIN allocations a ON a.signal_id=s.id WHERE a.user_id=? AND (s.created_at>=? OR s.status IN ('pending','open')) ORDER BY (s.status IN ('pending','open')) DESC,s.id DESC LIMIT 200",
               )
               .all(user.id, cutoff);
-      const closed = rows.filter((row) =>
-        ["target", "stopped"].includes(row.status),
+      const closed = rows.filter(
+        (row) =>
+          signalSucceeded(row) || ["target", "stopped"].includes(row.status),
       );
       const latest = rows.some((row) =>
         ["pending", "open"].includes(row.status),
@@ -398,7 +400,7 @@ export async function createApp(options = {}) {
         user: publicUser(user, now()),
         stats: {
           closed: closed.length,
-          wins: closed.filter((row) => row.status === "target").length,
+          wins: closed.filter(signalSucceeded).length,
         },
         serverTime: now(),
       });
