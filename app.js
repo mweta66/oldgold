@@ -90,7 +90,8 @@ let chartInterval = "1",
   toastTimer,
   draft = null;
 let stopMt5Chart = () => {},
-  chartSequence = 0;
+  chartSequence = 0,
+  mt5ChartEnabled = null;
 const statuses = {
   pending: "معلقة",
   open: "مفتوحة",
@@ -600,8 +601,12 @@ async function loadChart() {
   }
   $("#chartPanel").hidden = false;
   try {
-    const initial = await api("/api/admin/mt5/chart");
+    const initial =
+      mt5ChartEnabled === false
+        ? { enabled: false }
+        : await api("/api/admin/mt5/chart");
     if (sequence !== chartSequence || !canViewChart()) return;
+    mt5ChartEnabled = Boolean(initial.enabled);
     if (initial.enabled) {
       const { mountMt5Chart } = await import("./mt5-chart.js");
       if (sequence !== chartSequence || !canViewChart()) return;
@@ -634,6 +639,7 @@ async function loadChart() {
       );
       return;
     }
+    mt5ChartEnabled = false;
   }
   if (sequence !== chartSequence || !canViewChart()) return;
   $("#chartSource").textContent =
