@@ -2,11 +2,101 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import { validateMt5, aggregateMt5 } from "../mt5-data.js";
+import {
+  validateMt5,
+  aggregateMt5,
+  choosePriceSource,
+  MT5_FAILOVER_MS,
+} from "../mt5-data.js";
 import { fixture } from "./supabase-helpers.js";
 import { digest } from "../lib/crypto.js";
 
 const source = { symbol: "XAUUSD", server: "MetaQuotes-Demo" };
+test("source selection fails over on heartbeat loss, refuses stale prices, and recovers to fresh MT5", () => {
+  const now = Date.now(),
+    cloud = { price: 3990, quote_ms: now - 3000 };
+  const feed = {
+    bid: 4000,
+    ask: 4001,
+    quote_ms: now - 1000,
+    received_at: new Date(now).toISOString(),
+  };
+  assert.equal(choosePriceSource(feed, cloud, now), "mt5");
+  assert.equal(choosePriceSource(feed, cloud, now + MT5_FAILOVER_MS), "mt5");
+  assert.equal(
+    choosePriceSource(feed, cloud, now + MT5_FAILOVER_MS + 1),
+    "cloud",
+  );
+  assert.equal(
+    choosePriceSource({ ...feed, quote_ms: now - 16000 }, cloud, now),
+    "cloud",
+  );
+  assert.equal(choosePriceSource(null, cloud, now), "cloud");
+  assert.equal(
+    choosePriceSource(null, { ...cloud, quote_ms: now - 91000 }, now),
+    "unavailable",
+  );
+  assert.equal(
+    choosePriceSource(
+      { ...feed, received_at: new Date(now + 6000).toISOString() },
+      null,
+      now,
+    ),
+    "unavailable",
+  );
+  assert.equal(
+    choosePriceSource(
+      {
+        ...feed,
+        received_at: new Date(now + 4000).toISOString(),
+        quote_ms: now + 4000,
+      },
+      cloud,
+      now + 4000,
+    ),
+    "mt5",
+  );
+});
+test("admin chart retains the independent cloud backup when the PC feed or migration is unavailable", async (t) => {
+  const f = await fixture(t, { MT5_CHART_ENABLED: "true" });
+  const now = Date.now();
+  f.tables.wg_market_state[0].last_price = 3990;
+  f.tables.wg_market_state[0].last_quote_at = new Date(now).toISOString();
+  f.tables.wg_mt5_feed = [
+    {
+      id: 1,
+      ...source,
+      bid: 4000,
+      ask: 4001,
+      quote_ms: now,
+      received_at: new Date(now - 10000).toISOString(),
+    },
+  ];
+  f.tables.wg_mt5_bars = [];
+  const auth = await f.login();
+  let r = await f.request("/api/admin/mt5/chart", { auth });
+  assert.equal(r.body.activeSource, "cloud");
+  assert.equal(r.body.cloud.price, 3990);
+  assert.deepEqual(r.body.bars, []);
+  f.tables.wg_mt5_feed[0].received_at = new Date().toISOString();
+  r = await f.request("/api/admin/mt5/chart", { auth });
+  assert.equal(r.body.activeSource, "mt5");
+  assert.equal(
+    r.body.cloud.price,
+    3990,
+    "backup stays available while MT5 is healthy",
+  );
+  f.failTable("wg_mt5_feed");
+  r = await f.request("/api/admin/mt5/chart", { auth });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.activeSource, "cloud");
+  f.tables.wg_market_state[0].last_quote_at = new Date(
+    now - 120000,
+  ).toISOString();
+  r = await f.request("/api/admin/mt5/chart", { auth });
+  assert.equal(r.body.activeSource, "unavailable");
+  assert.equal(r.body.fresh, false);
+});
 const payload = () => {
   const now = Date.now();
   return {

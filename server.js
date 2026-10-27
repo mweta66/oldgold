@@ -893,6 +893,7 @@ export async function createApp(options = {}) {
     ["/trade-export.js", ["trade-export.js", "text/javascript; charset=utf-8"]],
     ["/mt5-data.js", ["mt5-data.js", "text/javascript; charset=utf-8"]],
     ["/mt5-chart.js", ["mt5-chart.js", "text/javascript; charset=utf-8"]],
+    ["/hybrid-chart.js", ["hybrid-chart.js", "text/javascript; charset=utf-8"]],
     [
       "/vendor/lightweight-charts.mjs",
       [

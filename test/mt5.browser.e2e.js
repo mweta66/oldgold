@@ -2,11 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { chromium } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { fixture, PASSWORD } from "./supabase-helpers.js";
 
 test("MT5 admin chart renders real-shaped OHLC, updates without reload, reports failure, and stops on logout", async (t) => {
   const f = await fixture(t);
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({
+    executablePath:
+      process.env.CHROMIUM_PATH ||
+      (process.platform === "win32" &&
+      existsSync("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe")
+        ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        : undefined),
+    headless: true,
+  });
   t.after(() => browser.close());
   const page = await browser.newPage({
     viewport: { width: 1440, height: 1000 },
@@ -14,10 +23,22 @@ test("MT5 admin chart renders real-shaped OHLC, updates without reload, reports 
   const errors = [];
   page.on("pageerror", (err) => errors.push(err.message));
   let calls = 0,
-    fail = false;
+    fail = false,
+    healthy = true,
+    hold = false,
+    release;
+  const gate = new Promise((resolve) => (release = resolve));
+  t.after(() => release());
+  await page.route("https://www.tradingview.com/**", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<html><title>Backup chart fixture</title></html>",
+    }),
+  );
   const now = Math.floor(Date.now() / 60000) * 60;
-  await page.route("**/api/admin/mt5/chart*", (route) => {
+  await page.route("**/api/admin/mt5/chart*", async (route) => {
     calls++;
+    if (hold) await gate;
     if (fail)
       return route.fulfill({
         status: 503,
@@ -35,7 +56,11 @@ test("MT5 admin chart renders real-shaped OHLC, updates without reload, reports 
           bid: 4000 + calls / 100,
           ask: 4000.3 + calls / 100,
           quote_ms: Date.now(),
+          received_at: new Date(
+            Date.now() - (healthy ? 0 : 10000),
+          ).toISOString(),
         },
+        cloud: { source: "GOLDAPI:XAUUSD", price: 3990, quote_ms: Date.now() },
         bars: Array.from({ length: 80 }, (_, i) => ({
           time: now - (79 - i) * 60,
           open: 4000 + i / 10,
@@ -73,6 +98,27 @@ test("MT5 admin chart renders real-shaped OHLC, updates without reload, reports 
   await page
     .locator("#chartPanel")
     .screenshot({ path: "test-results/mt5-chart.png" });
+  healthy = false;
+  await page.waitForSelector("#chartContainer iframe");
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#mt5ChartStatus")
+      .textContent.includes("تم الرجوع تلقائيًا"),
+  );
+  assert.equal(await page.locator("#chartContainer canvas").count(), 0);
+  assert.match(await page.locator("#mt5ChartStatus").textContent(), /3990.00/);
+  healthy = true;
+  await page.waitForSelector("#chartContainer canvas");
+  // Even a hanging request cannot keep a stale PC heartbeat displayed as live.
+  hold = true;
+  await page.waitForSelector("#chartContainer iframe");
+  assert.match(
+    await page.locator("#mt5ChartStatus").textContent(),
+    /تم الرجوع تلقائيًا/,
+  );
+  hold = false;
+  release();
+  await page.waitForSelector("#chartContainer canvas");
   fail = true;
   await page.waitForFunction(() =>
     document

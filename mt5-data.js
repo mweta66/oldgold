@@ -1,4 +1,26 @@
 // Shared, deterministic MT5 data rules. No credentials or network access.
+export const MT5_FAILOVER_MS = 3000;
+export function choosePriceSource(mt5, cloud, now = Date.now()) {
+  const age = (value) =>
+    now - (typeof value === "number" ? value : Date.parse(value));
+  const timely = (value, limit) =>
+    Number.isFinite(age(value)) && age(value) >= -5000 && age(value) <= limit;
+  const mt5Ready =
+    mt5 &&
+    Number.isFinite(mt5.bid) &&
+    mt5.bid > 0 &&
+    Number.isFinite(mt5.ask) &&
+    mt5.ask >= mt5.bid &&
+    timely(mt5.quote_ms, 15000) &&
+    timely(mt5.received_at, MT5_FAILOVER_MS);
+  const cloudReady =
+    cloud &&
+    Number.isFinite(cloud.price) &&
+    cloud.price > 0 &&
+    timely(cloud.quote_ms, 90000);
+  return mt5Ready ? "mt5" : cloudReady ? "cloud" : "unavailable";
+}
+
 export function validateMt5(data, { symbol, server }, now = Date.now()) {
   const fail = () => {
     throw Object.assign(new Error("قراءة MT5 غير صالحة أو قديمة."), {

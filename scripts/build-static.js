@@ -10,6 +10,7 @@ for (const name of [
   "trade-export.js",
   "mt5-data.js",
   "mt5-chart.js",
+  "hybrid-chart.js",
   "styles.css",
   "icon.svg",
   "manifest.webmanifest",

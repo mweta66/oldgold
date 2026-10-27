@@ -608,7 +608,7 @@ async function loadChart() {
     if (sequence !== chartSequence || !canViewChart()) return;
     mt5ChartEnabled = Boolean(initial.enabled);
     if (initial.enabled) {
-      const { mountMt5Chart } = await import("./mt5-chart.js");
+      const { mountHybridChart } = await import("./hybrid-chart.js");
       if (sequence !== chartSequence || !canViewChart()) return;
       $("#chartContainer").replaceChildren();
       $("#chartContainer").dataset.mt5 = "true";
@@ -616,7 +616,7 @@ async function loadChart() {
         "MT5 من جهازك · تحديث تقريبي كل ثانية أثناء الاتصال";
       $("#chartNote").textContent =
         "شموع MT5 للمدير فقط. محرك الإشارات الآلي ما زال يستخدم Gold API؛ لم يتم تحويله إلى MT5. تظل فجوات المصدر ظاهرة دون شموع مصطنعة.";
-      stopMt5Chart = mountMt5Chart({
+      stopMt5Chart = mountHybridChart({
         container: $("#chartContainer"),
         status: $("#mt5ChartStatus"),
         api,
@@ -624,19 +624,28 @@ async function loadChart() {
         minutes: Number(chartInterval),
         allowed: canViewChart,
         zone: displayZone,
+        renderFallback: renderLegacyChart,
+        onSource(source) {
+          $("#chartSource").textContent =
+            source === "mt5"
+              ? "MT5 من جهازك · تحديث تقريبي كل ثانية · احتياطي سحابي تلقائي"
+              : "الوضع الاحتياطي · شارت OANDA من TradingView · سعر التحليل Gold API";
+          $("#chartNote").textContent =
+            "محرك الإشارات الآلي ما زال يستخدم Gold API باستقلال عن جهازك. التحويل يبدّل مصدر العرض ولا يخلط أسعار الوسيط مع المصدر السحابي داخل الشموع أو الصفقات.";
+        },
       });
       return;
     }
   } catch (err) {
     if (sequence !== chartSequence || !canViewChart()) return;
     if (err.status !== 404) {
-      $("#chartContainer").replaceChildren(
-        element(
-          "p",
-          "تعذر التحقق من مصدر الشارت. حدّث الصفحة.",
-          "message negative",
-        ),
-      );
+      renderLegacyChart();
+      $("#mt5ChartStatus").textContent =
+        "تعذر فحص MT5؛ الشارت السابق معروض وسنعيد التحقق تلقائيًا.";
+      const retry = setTimeout(() => {
+        if (sequence === chartSequence && canViewChart()) loadChart();
+      }, 3000);
+      stopMt5Chart = () => clearTimeout(retry);
       return;
     }
     mt5ChartEnabled = false;
@@ -647,6 +656,10 @@ async function loadChart() {
   $("#chartNote").textContent =
     "للمراجعة الشخصية للمدير فقط؛ لا يظهر للمشتركين ولا يُرسل إلى Telegram. ليس مرجع متابعة الإشارات الآلية.";
   $("#mt5ChartStatus").textContent = "";
+  renderLegacyChart();
+}
+
+function renderLegacyChart() {
   const iframe = document.createElement("iframe");
   const params = new URLSearchParams({
     symbol: "OANDA:XAUUSD",

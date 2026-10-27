@@ -9,6 +9,7 @@ export function mountMt5Chart({
   minutes,
   allowed,
   zone,
+  polling = true,
 }) {
   const light = document.documentElement.dataset.theme === "ivory";
   const chart = createChart(container, {
@@ -119,7 +120,7 @@ export function mountMt5Chart({
     if (!stopped) timer = setTimeout(poll, 1000);
   };
   // Keep age visible even while a request is slow or the browser is offline.
-  const clock = setInterval(paintStatus, 1000);
+  const clock = polling ? setInterval(paintStatus, 1000) : null;
   function stop() {
     if (stopped) return;
     stopped = true;
@@ -131,6 +132,7 @@ export function mountMt5Chart({
     status.textContent = "";
   }
   accept(initial);
-  timer = setTimeout(poll, 1000);
+  if (polling) timer = setTimeout(poll, 1000);
+  stop.update = accept;
   return stop;
 }
