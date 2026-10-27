@@ -22,7 +22,17 @@ export function mountMt5Chart({
       vertLines: { color: "#65786b22" },
       horzLines: { color: "#65786b22" },
     },
-    timeScale: { timeVisible: true, secondsVisible: false },
+    timeScale: {
+      timeVisible: true,
+      secondsVisible: false,
+      tickMarkFormatter: (time) =>
+        new Intl.DateTimeFormat("en-GB", {
+          timeZone: zone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).format(Number(time) * 1000),
+    },
     localization: {
       timeFormatter: (time) =>
         new Intl.DateTimeFormat("ar-EG", {

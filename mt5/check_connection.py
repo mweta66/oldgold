@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import time
 import math
+import subprocess
 
 
 def terminal_path():
@@ -34,6 +35,11 @@ def inspect(mt5, terminal, symbol=None):
         if not mt5.symbol_select(symbol, True):
             return {"ok": False, "code": "SYMBOL_NOT_AVAILABLE"}
         tick = mt5.symbol_info_tick(symbol)
+        # The first subscription may need a few seconds to receive its first tick.
+        deadline = time.monotonic() + 5
+        while (tick is None or tick.bid <= 0 or tick.ask <= 0 or tick.time_msc <= 0) and time.monotonic() < deadline:
+            time.sleep(0.5)
+            tick = mt5.symbol_info_tick(symbol)
         if tick is None or not all(math.isfinite(x) and x>0 for x in (tick.bid, tick.ask)) or tick.ask<tick.bid or tick.time_msc<=0:
             return {"ok": False, "code": "WAITING_FOR_QUOTE"}
         age_ms = max(0, int(time.time() * 1000) - tick.time_msc)
@@ -48,7 +54,22 @@ def main():
     parser = argparse.ArgumentParser(description="Read MT5 connectivity and gold symbols only")
     parser.add_argument("--terminal", default=terminal_path())
     parser.add_argument("--symbol")
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if not args.worker:
+        command = [sys.executable, str(Path(__file__).resolve()), "--worker", "--terminal", args.terminal]
+        if args.symbol:
+            command += ["--symbol", args.symbol]
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        try:
+            output, _ = process.communicate(timeout=20)
+            print(output.strip() or json.dumps({"ok":False,"code":"MT5_PROBE_FAILED"}))
+            return process.returncode or 0
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            print(json.dumps({"ok":False,"code":"MT5_READER_TIMEOUT"}))
+            return 1
     try:
         import MetaTrader5 as mt5
         report = inspect(mt5, args.terminal, args.symbol)

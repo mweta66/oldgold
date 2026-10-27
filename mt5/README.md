@@ -30,8 +30,9 @@ Lightweight Charts مستقل. الإرسال وتحديث الشاشة تقري
 قبل التفعيل يجب:
 
 1. تطبيق `supabase/migrations/014_mt5_chart_feed.sql` مرة واحدة بعد 001–013.
-2. تعيين `MT5_SYMBOL` و`MT5_SERVER` وهوية المصدر، و`MT5_BRIDGE_TOKEN` عشوائيًا من 64 خانة hex
-   في بيئة الخادم فقط، ثم `MT5_CHART_ENABLED=true` وإعادة النشر بعد الاختبارات.
+2. تعيين `MT5_SYMBOL` و`MT5_SERVER` وهوية المصدر، و`MT5_BRIDGE_TOKEN_HASH` كبصمة SHA-256
+   لمفتاح عشوائي من 64 خانة hex في بيئة الخادم، ثم `MT5_CHART_ENABLED=true` وإعادة النشر بعد الاختبارات.
+   يبقى المفتاح الأصلي في جهاز المالك فقط؛ البصمة ليست مفتاحًا مقبولًا لطلب الإرسال.
 3. إنشاء `mt5/config.local.json` محليًا (مستبعد من Git) بمفاتيح `origin` و`token` و`symbol` و`server`.
    `origin` هو `https://wetagold.vercel.app`. لا تستخدم مفاتيح Supabase أو Telegram في هذا الملف؛
    توكن الربط خاص بإدخال أسعار هذا المصدر فقط.

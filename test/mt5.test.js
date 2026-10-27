@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { validateMt5, aggregateMt5 } from "../mt5-data.js";
 import { fixture } from "./supabase-helpers.js";
+import { digest } from "../lib/crypto.js";
 
 const source = { symbol: "XAUUSD", server: "MetaQuotes-Demo" };
 const payload = () => {
@@ -70,7 +71,7 @@ test("MT5 API rejects missing credentials, protects admin charts and does not to
     MT5_CHART_ENABLED: "true",
     MT5_SYMBOL: source.symbol,
     MT5_SERVER: source.server,
-    MT5_BRIDGE_TOKEN: secret,
+    MT5_BRIDGE_TOKEN_HASH: digest(secret),
   });
   assert.equal(
     (await f.request("/api/mt5/ingest", { method: "POST", data: payload() }))
@@ -78,6 +79,17 @@ test("MT5 API rejects missing credentials, protects admin charts and does not to
     401,
   );
   assert.equal((await f.request("/api/admin/mt5/chart")).status, 401);
+  assert.equal(
+    (
+      await f.request("/api/mt5/ingest", {
+        method: "POST",
+        data: payload(),
+        headers: { authorization: `Bearer ${digest(secret)}` },
+      })
+    ).status,
+    401,
+    "the stored hash cannot be used as a bearer credential",
+  );
   const member = await f.login("member@example.test");
   assert.equal(
     (await f.request("/api/admin/mt5/chart", { auth: member })).status,
