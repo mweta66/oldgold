@@ -26,7 +26,7 @@ revoke all on public.wg_mt5_feed,public.wg_mt5_bars from public,anon,authenticat
 grant all on public.wg_mt5_feed,public.wg_mt5_bars to service_role;
 
 create function public.wg_mt5_ingest(p_payload jsonb) returns jsonb
-language plpgsql security definer set search_path=public as $$
+language plpgsql security invoker set search_path=public as $$
 declare previous wg_mt5_feed; b jsonb; stamp bigint:=floor(extract(epoch from clock_timestamp())*1000);
 begin
   perform pg_advisory_xact_lock(910726432);

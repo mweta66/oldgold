@@ -3,6 +3,8 @@ node_modules/
 .tools/
 __pycache__/
 mt5/config.local.json
+mt5/*.set
+mt5/*.ex5
 dist/
 .vercel/
 .env
