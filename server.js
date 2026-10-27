@@ -891,6 +891,16 @@ export async function createApp(options = {}) {
     ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
     ["/time-zones.js", ["time-zones.js", "text/javascript; charset=utf-8"]],
     ["/trade-export.js", ["trade-export.js", "text/javascript; charset=utf-8"]],
+    ["/mt5-data.js", ["mt5-data.js", "text/javascript; charset=utf-8"]],
+    ["/mt5-chart.js", ["mt5-chart.js", "text/javascript; charset=utf-8"]],
+    ["/hybrid-chart.js", ["hybrid-chart.js", "text/javascript; charset=utf-8"]],
+    [
+      "/vendor/lightweight-charts.mjs",
+      [
+        "node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.mjs",
+        "text/javascript; charset=utf-8",
+      ],
+    ],
     ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
     ["/icon.svg", ["icon.svg", "image/svg+xml"]],
     ["/assets/wetagold-mark.png", ["assets/wetagold-mark.png", "image/png"]],

@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "2.118.0",
-    "countries-and-timezones": "3.11.0"
+    "countries-and-timezones": "3.11.0",
+    "lightweight-charts": "5.0.9"
   }
 }

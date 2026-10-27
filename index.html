@@ -410,7 +410,7 @@
           <div class="panel-head">
             <div>
               <h3>شارت الذهب · خاص بالمدير</h3>
-              <span class="muted small"
+              <span class="muted small" id="chartSource"
                 >TradingView · OANDA:XAUUSD · مصدر مختلف عن Gold API، وليس مرجع
                 متابعة الإشارات الآلية</span
               >
@@ -439,7 +439,8 @@
             </div>
           </div>
           <div class="chart" id="chartContainer"></div>
-          <p class="small muted">
+          <p id="mt5ChartStatus" class="small muted" role="status"></p>
+          <p class="small muted" id="chartNote">
             للمراجعة الشخصية للمدير فقط؛ لا يظهر للمشتركين ولا يُرسل إلى
             Telegram. السعر المرجعي داخل الشارت قد يختلف عن سعر التنفيذ لدى
             وسيطك، وإخفاؤه لا يحوّله إلى مصدر لتوليد الإشارات آليًا.
