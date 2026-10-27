@@ -72,7 +72,11 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   document.querySelector('meta[name="theme-color"]').content =
     theme === "ivory" ? "#f5f2eb" : "#0b0e14";
-  if (changed && $("#chartContainer iframe")) loadChart();
+  if (
+    changed &&
+    ($("#chartContainer iframe") || $("#chartContainer").dataset.mt5)
+  )
+    loadChart();
 }
 async function syncAppearance() {
   try {
@@ -85,6 +89,8 @@ async function syncAppearance() {
 let chartInterval = "1",
   toastTimer,
   draft = null;
+let stopMt5Chart = () => {},
+  chartSequence = 0;
 const statuses = {
   pending: "معلقة",
   open: "مفتوحة",
@@ -486,6 +492,10 @@ function setSession(payload) {
   $("#checkOperations").disabled = false;
   $("#usersTable").replaceChildren();
   $("#auditLog").replaceChildren();
+  chartSequence++;
+  stopMt5Chart();
+  stopMt5Chart = () => {};
+  delete $("#chartContainer").dataset.mt5;
   $("#chartContainer").replaceChildren();
   $("#chartPanel").hidden = true;
   $("#adminTelegramStatus").textContent = "";
@@ -578,13 +588,59 @@ function renderAccount() {
   );
 }
 
-function loadChart() {
+async function loadChart() {
+  const sequence = ++chartSequence;
+  stopMt5Chart();
+  stopMt5Chart = () => {};
+  delete $("#chartContainer").dataset.mt5;
   if (!canViewChart()) {
     $("#chartContainer").replaceChildren();
     $("#chartPanel").hidden = true;
     return;
   }
   $("#chartPanel").hidden = false;
+  try {
+    const initial = await api("/api/admin/mt5/chart");
+    if (sequence !== chartSequence || !canViewChart()) return;
+    if (initial.enabled) {
+      const { mountMt5Chart } = await import("./mt5-chart.js");
+      if (sequence !== chartSequence || !canViewChart()) return;
+      $("#chartContainer").replaceChildren();
+      $("#chartContainer").dataset.mt5 = "true";
+      $("#chartSource").textContent =
+        "MT5 من جهازك · تحديث تقريبي كل ثانية أثناء الاتصال";
+      $("#chartNote").textContent =
+        "شموع MT5 للمدير فقط. محرك الإشارات الآلي ما زال يستخدم Gold API؛ لم يتم تحويله إلى MT5. تظل فجوات المصدر ظاهرة دون شموع مصطنعة.";
+      stopMt5Chart = mountMt5Chart({
+        container: $("#chartContainer"),
+        status: $("#mt5ChartStatus"),
+        api,
+        initial,
+        minutes: Number(chartInterval),
+        allowed: canViewChart,
+        zone: displayZone,
+      });
+      return;
+    }
+  } catch (err) {
+    if (sequence !== chartSequence || !canViewChart()) return;
+    if (err.status !== 404) {
+      $("#chartContainer").replaceChildren(
+        element(
+          "p",
+          "تعذر التحقق من مصدر الشارت. حدّث الصفحة.",
+          "message negative",
+        ),
+      );
+      return;
+    }
+  }
+  if (sequence !== chartSequence || !canViewChart()) return;
+  $("#chartSource").textContent =
+    "TradingView · OANDA:XAUUSD · مصدر مختلف عن Gold API";
+  $("#chartNote").textContent =
+    "للمراجعة الشخصية للمدير فقط؛ لا يظهر للمشتركين ولا يُرسل إلى Telegram. ليس مرجع متابعة الإشارات الآلية.";
+  $("#mt5ChartStatus").textContent = "";
   const iframe = document.createElement("iframe");
   const params = new URLSearchParams({
     symbol: "OANDA:XAUUSD",
@@ -1375,7 +1431,12 @@ async function refreshOnce() {
     csrf = session.csrf;
     renderAccount();
     if (active()) {
-      if (canViewChart() && !$("#chartContainer iframe")) loadChart();
+      if (
+        canViewChart() &&
+        !$("#chartContainer iframe") &&
+        !$("#chartContainer").dataset.mt5
+      )
+        loadChart();
       const result = await api("/api/signals");
       if (version !== generation) return;
       user = result.user;
@@ -1395,6 +1456,10 @@ async function refreshOnce() {
         : "لا توجد نتائج مغلقة بعد";
     } else {
       clearSignals();
+      chartSequence++;
+      stopMt5Chart();
+      stopMt5Chart = () => {};
+      delete $("#chartContainer").dataset.mt5;
       $("#chartContainer").replaceChildren();
     }
     if (user.role === "admin" && !user.mustChangePassword) {

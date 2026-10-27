@@ -1,4 +1,8 @@
 node_modules/
+.mt5-venv/
+.tools/
+__pycache__/
+mt5/config.local.json
 dist/
 .vercel/
 .env
