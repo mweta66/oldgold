@@ -109,7 +109,10 @@ test("cloud quotes publish real v3 levels and track TP/SL without an external hi
     false,
   );
   const signal = (await db.query("select * from wg_signals")).rows[0];
-  assert.equal(signal.market_levels.method, "confirmed-sampled-pivots-v1");
+  assert.equal(
+    signal.market_levels.method,
+    "confirmed-sampled-pivots-double-stop-v2",
+  );
   assert.equal(
     (await db.query("select used from wg_profiles where role='member'")).rows[0]
       .used,
