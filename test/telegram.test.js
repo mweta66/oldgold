@@ -108,7 +108,7 @@ test("manual signal without optional reference fields is sent once to the privat
   assert.equal(sent[0].chat_id, "-1001");
   assert.match(
     sent[0].text,
-    /^🟢 📈 إشارة شراء\nالدخول: 100\.00\nSL: 99\.00\nTP: 101\.50$/,
+    /^🟢 📈 BUY — شراء\n🎯 entry : 100\.00\$\n🎯 tp 1 : 101\.50\$\n🛑 sl : 99\.00\$$/,
   );
   const stored = f.app.db.prepare("select * from signals").get();
   assert.equal(stored.reference_price, null);
@@ -180,14 +180,14 @@ test("three targets each deliver their own ordered snapshot to the verified grou
       .map((row) => row.text);
     assert.equal(texts.length, 5);
     if (chat === "-1001") {
-      assert.match(texts[0], /^🟢 📈 إشارة شراء\nالدخول:/);
+      assert.match(texts[0], /^🟢 📈 BUY — شراء\n🎯 entry :/);
       for (let n = 1; n <= 3; n++)
         assert.match(
           texts[n + 1],
           new RegExp(`^✅ تحقق الهدف TP${n} — شراء\\n`),
         );
-      assert.doesNotMatch(texts[2], /TP2: 102\.00 ✅/);
-      assert.match(texts[4], /TP3: 103\.00 ✅/);
+      assert.doesNotMatch(texts[2], /tp 2 : 102\.00\$ ✅/);
+      assert.match(texts[4], /tp 3 : 103\.00\$ ✅/);
       assert.ok(
         texts.every((text) => !/UTC|المصدر|مرجع التحديث|WetaGold/.test(text)),
       );
@@ -195,7 +195,7 @@ test("three targets each deliver their own ordered snapshot to the verified grou
     }
     for (let n = 1; n <= 3; n++)
       assert.match(texts[n + 1], new RegExp(`تسجيل تحقق TP${n}`));
-    assert.doesNotMatch(texts[2], /TP2: 102 — مسجّل/);
+    assert.doesNotMatch(texts[2], /tp 2 : 102 — مسجّل/);
     assert.match(texts[4], /اكتملت الأهداف/);
     assert.match(texts[4], /ليست تأكيد تنفيذ/);
   }
@@ -273,7 +273,7 @@ test("bot linking uses a one-time private-chat token and publishing queues real 
   assert.match(sent.find((row) => row.chat_id === "123").text, /OANDA:XAUUSD/);
   assert.match(
     sent.find((row) => row.chat_id === "-1001").text,
-    /^🟢 📈 إشارة شراء\nالدخول:/,
+    /^🟢 📈 BUY — شراء\n🎯 entry :/,
   );
   await f.request("/api/admin/signals", { method: "POST", auth: admin, data });
   await f.app.telegram.flush();
@@ -349,7 +349,7 @@ test("private owner-managed group receives publication, opening, TP and SL; upda
     .filter((s) => s.chat_id === "123")
     .map((s) => s.text);
   assert.equal(memberTexts.length, 3);
-  assert.match(memberTexts[0], /^🟢 📈 إشارة شراء/);
+  assert.match(memberTexts[0], /^🟢 📈 BUY — شراء/);
   assert.match(memberTexts[1], /مفتوحة/);
   assert.match(memberTexts[2], /تحقق الهدف TP/);
   const next = await f.request("/api/admin/signals", {

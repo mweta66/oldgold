@@ -32,7 +32,11 @@ test("dynamic targets use real confirmed levels, vary with the market and never 
     p = structureLevels(points(q), "buy", q.at(-1).price);
   assert.equal(p.reason, "ready");
   assert.deepEqual(p.decision.targets, [4041.95, 4049.95, 4064.95]);
-  assert.equal(p.decision.stop, 4026.95);
+  assert.equal(p.decision.stop, 4020.9);
+  assert.equal(p.decision.levelsBasis.baseStop, 4026.95);
+  assert.equal(p.decision.levelsBasis.stopDistanceMultiplier, 2);
+  assert.equal(p.decision.levelsBasis.firstRewardRisk, 0.73966942);
+  assert.equal(p.decision.levelsBasis.baseFirstRewardRisk, 1.47933884);
   assert.equal(p.decision.levelsBasis.stopSwing.price, 4027);
   assert.deepEqual(
     p.decision.levelsBasis.targetSwings.map((x) => x.price),
@@ -134,4 +138,31 @@ test("PostgreSQL independently derives identical levels and evidence across dire
     db.query("select wg_market_structure(now(),'buy',4000)"),
     /permission denied/,
   );
+});
+
+test("both directions double the support/resistance stop distance while retaining targets and the original opportunity filter", () => {
+  for (const reverse of [false, true]) {
+    const q = history({ reverse });
+    const d = structureLevels(
+      points(q),
+      reverse ? "sell" : "buy",
+      q.at(-1).price,
+    ).decision;
+    const b = d.levelsBasis;
+    assert(
+      Math.abs(
+        Math.abs(d.entry - d.stop) - 2 * Math.abs(d.entry - b.baseStop),
+      ) < 0.011,
+    );
+    assert.equal(b.stopSwing.kind, reverse ? "high" : "low");
+    assert.deepEqual(
+      d.targets,
+      reverse ? [4049.05, 4041.05, 4026.05] : [4041.95, 4049.95, 4064.95],
+    );
+    assert(b.baseFirstRewardRisk >= 1.2);
+    assert(
+      b.firstRewardRisk < 1.2,
+      "Actual, reduced reward/risk must be reported honestly",
+    );
+  }
 });

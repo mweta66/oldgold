@@ -242,7 +242,7 @@ test("SQLite cutover survives restart, cancels old queues and root-backed TP/SL,
   event(2, "tp1", "open", 1);
   await bot.flush();
   assert.equal(sent.length, 2);
-  assert.match(sent[0].text, /إشارة شراء/);
+  assert.match(sent[0].text, /BUY — شراء/);
   assert.equal(sent[1].reply_parameters.message_id, 101);
   assert.match(sent[1].text, /✅ تحقق الهدف TP1/);
 });

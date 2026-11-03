@@ -103,7 +103,7 @@ test("PostgreSQL optional-reference upgrade preserves existing records and accep
     const text = signalMessage(events[0].snapshot, events[0], {
       compact: true,
     });
-    assert.match(text, /الدخول: 4000\.00\nSL: 3990\.00\nTP1: 4010\.00/);
+    assert.match(text, /entry : 4000\.00\$\n🎯 tp 1 : 4010\.00\$/);
     assert.equal((await publish(data)).duplicate, true);
     assert.equal(
       (await db.query("select count(*)::int n from wg_outbox")).rows[0].n,
