@@ -739,7 +739,12 @@ function signalCard(signal) {
     );
   wrap.append(head, levels, meta);
   if (signal.marketStrategy) {
-    if (signal.levelsBasis?.method === "confirmed-sampled-pivots-v1") {
+    if (
+      [
+        "confirmed-sampled-pivots-v1",
+        "confirmed-sampled-pivots-bounded-stop-v3",
+      ].includes(signal.levelsBasis?.method)
+    ) {
       const basis = signal.levelsBasis;
       const explanation = element("details", undefined, "small");
       explanation.append(element("summary", "لماذا هذه الأهداف وهذا الوقف؟"));
@@ -752,7 +757,7 @@ function signalCard(signal) {
       explanation.append(
         element(
           "p",
-          `الأهداف قبل مستويات ${signal.direction === "buy" ? "مقاومة" : "دعم"} مؤكدة: ${basis.targetSwings.map((p) => price(p.price)).join(" · ")}. العائد المرجعي إلى المخاطرة لأول هدف ${Number(basis.firstRewardRisk).toFixed(2)}.`,
+          `الأهداف ${basis.targetBuffer === 1 ? "قبل المستويات بدولار واحد" : "قبل المستويات بهامش التقلب"} · ${signal.direction === "buy" ? "مقاومة" : "دعم"} مؤكدة: ${basis.targetSwings.map((p) => price(p.price)).join(" · ")}. العائد المرجعي إلى المخاطرة لأول هدف ${Number(basis.firstRewardRisk).toFixed(2)}.`,
         ),
       );
       explanation.append(
@@ -1354,6 +1359,12 @@ function renderMarket() {
       "انتظار اكتمال آخر 30 دقيقة بعد انقطاع؛ البيانات السابقة محفوظة",
     awaiting_fresh_quote: "انتظار سعر حديث؛ الإشارات الجديدة متوقفة",
     no_setup: "المتابعة تعمل؛ لا توجد فرصة مطابقة للقواعد الآن",
+    weak_momentum:
+      "انتظار توافق ميل الاتجاه وحركتين متتاليتين من دقائق مغلقة؛ ليست شموع وسيط",
+    late_entry:
+      "تجاوزت قراءة المصدر أول 15 ثانية من دقيقة الدخول؛ تُترك الفرصة",
+    stretched_entry:
+      "السعر ابتعد أكثر من دولار عن إغلاق التأكيد؛ لا تتم مطاردته",
     no_structure:
       "لا توجد قمم وقيعان مؤكدة مناسبة للوقف والأهداف؛ لم تُنشأ إشارة بديلة",
     poor_reward:

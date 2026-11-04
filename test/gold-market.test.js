@@ -235,6 +235,8 @@ async function database(
           "012_cloud_market_polling.sql",
           "013_remove_cumulative_risk_halt.sql",
           "015_double_structure_stop.sql",
+          "016_bounded_structure_levels.sql",
+          "017_entry_confirmation.sql",
         ]
       : []),
   ])
@@ -267,7 +269,7 @@ async function database(
       )
     ).rows[0].value;
   };
-  let quoteAt = Date.now();
+  let quoteAt = Math.floor(Date.now() / MINUTE) * MINUTE + 1000;
   let quotePrice = sell ? 4058 : 4033;
   let feedFailure = false;
   let requests = 0;
@@ -511,10 +513,10 @@ test("a sell emits TP1 then TP2 exactly once at observed thresholds and cannot e
   const signal = (await db.query("select * from wg_signals")).rows[0];
   assert.equal(signal.direction, "sell");
   const goals = signal.targets.map(Number);
-  assert.deepEqual(goals, [4049.05, 4041.05, 4026.05]);
+  assert.deepEqual(goals, [4050, 4042, 4027]);
   assert.equal(
     signal.market_levels.method,
-    "confirmed-sampled-pivots-double-stop-v2",
+    "confirmed-sampled-pivots-bounded-stop-v3",
   );
   f.setQuote(goals[0] - 0.1);
   await f.run();
@@ -719,7 +721,7 @@ test("recent-gap rejection is stable across all fifteen M15 clock phases when in
   const anchor = Date.parse("2026-01-01T12:00:00Z");
   for (let phase = 0; phase < 15; phase++) {
     const cutoff = anchor + phase * MINUTE;
-    const quote = { at: cutoff + 30000, price: 4048 };
+    const quote = { at: cutoff + 1000, price: 4048 };
     const history = quotes(cutoff, 481)
       .slice(0, -1)
       .map((q) => ({ ...q, at: q.at + 30000 }));
@@ -803,6 +805,8 @@ test("005 to 006 upgrade preserves a live v1 position, its deliveries, allocatio
     "010_telegram_sending_switch.sql",
     "011_market_structure_levels.sql",
     "015_double_structure_stop.sql",
+    "016_bounded_structure_levels.sql",
+    "017_entry_confirmation.sql",
   ])
     await db.exec(
       await readFile(
