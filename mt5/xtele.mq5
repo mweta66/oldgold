@@ -1,4 +1,4 @@
-#property copyright "Xgold"
+#property copyright "xtele"
 #property version "1.00"
 #property strict
 #property description "Two 0.01 gold positions per confirmed Telegram publication; stepped runner stop."
@@ -31,7 +31,7 @@ struct Signal
 
 void State(const string text)
   {
-   if(text!=last_state) { Print("Xgold executor: ",text); last_state=text; }
+   if(text!=last_state) { Print("xtele: ",text); last_state=text; }
   }
 bool ValidToken()
   {

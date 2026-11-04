@@ -22,5 +22,5 @@ void OnStart()
    Expect(XgoldStageStop(3,4000,buy)==4020,"buy TP2 stop at TP3");
    Expect(XgoldStageStop(2,4000,sell)==3990,"sell TP1 stop at TP2");
    Expect(XgoldStageStop(3,4000,sell)==3980,"sell TP2 stop at TP3");
-   Print(failures==0?"PASS: all 15 Xgold step-rule checks.":"FAIL: Xgold rule checks: "+IntegerToString(failures));
+   Print(failures==0?"PASS: all 15 xtele step-rule checks.":"FAIL: xtele rule checks: "+IntegerToString(failures));
   }
