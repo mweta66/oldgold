@@ -15,3 +15,5 @@ data/
 test-results/
 playwright-report/
 *.log
+
+mt5/private/
