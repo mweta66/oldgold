@@ -236,6 +236,7 @@ async function database(
           "013_remove_cumulative_risk_halt.sql",
           "015_double_structure_stop.sql",
           "016_bounded_structure_levels.sql",
+          "017_entry_confirmation.sql",
         ]
       : []),
   ])
@@ -268,7 +269,7 @@ async function database(
       )
     ).rows[0].value;
   };
-  let quoteAt = Date.now();
+  let quoteAt = Math.floor(Date.now() / MINUTE) * MINUTE + 1000;
   let quotePrice = sell ? 4058 : 4033;
   let feedFailure = false;
   let requests = 0;
@@ -720,7 +721,7 @@ test("recent-gap rejection is stable across all fifteen M15 clock phases when in
   const anchor = Date.parse("2026-01-01T12:00:00Z");
   for (let phase = 0; phase < 15; phase++) {
     const cutoff = anchor + phase * MINUTE;
-    const quote = { at: cutoff + 30000, price: 4048 };
+    const quote = { at: cutoff + 1000, price: 4048 };
     const history = quotes(cutoff, 481)
       .slice(0, -1)
       .map((q) => ({ ...q, at: q.at + 30000 }));
@@ -805,6 +806,7 @@ test("005 to 006 upgrade preserves a live v1 position, its deliveries, allocatio
     "011_market_structure_levels.sql",
     "015_double_structure_stop.sql",
     "016_bounded_structure_levels.sql",
+    "017_entry_confirmation.sql",
   ])
     await db.exec(
       await readFile(
