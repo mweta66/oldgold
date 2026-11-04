@@ -6,7 +6,10 @@ import { goldDecision } from "../lib/gold-market.js";
 const ADMIN = "00000000-0000-4000-8000-000000000001",
   MEMBER = "00000000-0000-4000-8000-000000000002",
   minute = 60000;
-async function database(t, { beforeRiskRemoval = false } = {}) {
+async function database(
+  t,
+  { beforeRiskRemoval = false, beforeBoundedLevels = false } = {},
+) {
   const db = new PGlite();
   t.after(() => db.close());
   await db.exec(`create schema auth;create table auth.users(id uuid primary key);create role anon;create role authenticated;create role service_role bypassrls;
@@ -20,7 +23,8 @@ async function database(t, { beforeRiskRemoval = false } = {}) {
     .filter(
       (x) =>
         /^\d{3}_.*\.sql$/.test(x) &&
-        !(beforeRiskRemoval && x.startsWith("013_")),
+        !(beforeRiskRemoval && x.startsWith("013_")) &&
+        !(beforeBoundedLevels && x.startsWith("016_")),
     )
     .sort())
     await db.exec(await readFile(new URL(name, dir), "utf8"));
@@ -111,7 +115,7 @@ test("cloud quotes publish real v3 levels and track TP/SL without an external hi
   const signal = (await db.query("select * from wg_signals")).rows[0];
   assert.equal(
     signal.market_levels.method,
-    "confirmed-sampled-pivots-double-stop-v2",
+    "confirmed-sampled-pivots-bounded-stop-v3",
   );
   assert.equal(
     (await db.query("select used from wg_profiles where role='member'")).rows[0]
@@ -307,4 +311,68 @@ test("native scheduler wakes Telegram only for due deliveries and respects the g
     ).rows[0].n,
     1,
   );
+});
+
+test("016 preserves active signal levels, history, quota and deliveries while restoring bounded cloud structure filtering", async (t) => {
+  const db = await database(t, { beforeBoundedLevels: true });
+  const at = Date.now();
+  await seed(db, history(Math.floor(at / minute) * minute).slice(0, -1));
+  await db.query("select wg_market_config($1,true)", [ADMIN]);
+  await db.exec("update wg_market_state set loss_used=10000");
+  await db.query("select wg_market_cloud_quote($1::jsonb)", [
+    JSON.stringify(payload(4033, at)),
+  ]);
+  const snapshot = async () =>
+    (
+      await db.query(`select jsonb_build_object(
+    'signals',(select jsonb_agg(to_jsonb(s) order by id) from wg_signals s),
+    'events',(select jsonb_agg(to_jsonb(s) order by id) from wg_signal_events s),
+    'outbox',(select jsonb_agg(to_jsonb(s) order by id) from wg_outbox s),
+    'profiles',(select jsonb_agg(to_jsonb(s) order by id) from wg_profiles s),
+    'loss',(select loss_used from wg_market_state)) x`)
+    ).rows[0].x;
+  const before = await snapshot();
+  assert.equal(before.signals[0].market_levels.stopDistanceMultiplier, 2);
+  await db.exec(
+    await readFile(
+      new URL(
+        "../supabase/migrations/016_bounded_structure_levels.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(await snapshot(), before);
+  const plan = (
+    await db.query("select wg_market_cloud_plan($1,4033) x", [
+      new Date(at).toISOString(),
+    ])
+  ).rows[0].x;
+  assert.equal(plan.strategy, "sampled-m15-8-21-m1-structure-v3");
+  assert.equal(
+    plan.decision.levelsBasis.method,
+    "confirmed-sampled-pivots-bounded-stop-v3",
+  );
+  assert(
+    Math.abs(plan.decision.entry - plan.decision.stop) >= 6 &&
+      Math.abs(plan.decision.entry - plan.decision.stop) <= 10,
+  );
+  assert.equal(
+    (await db.query("select wg_market_risk_limit_enabled() enabled")).rows[0]
+      .enabled,
+    false,
+  );
+  const goal = Number(before.signals[0].targets[0]);
+  await db.query("select wg_market_cloud_quote($1::jsonb)", [
+    JSON.stringify(payload(goal, at + 1)),
+  ]);
+  const active = (
+    await db.query("select stop,targets,targets_hit from wg_signals")
+  ).rows[0];
+  assert.equal(Number(active.stop), Number(before.signals[0].stop));
+  assert.deepEqual(
+    active.targets.map(Number),
+    before.signals[0].targets.map(Number),
+  );
+  assert.equal(active.targets_hit, 1);
 });

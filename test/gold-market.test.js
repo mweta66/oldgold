@@ -235,6 +235,7 @@ async function database(
           "012_cloud_market_polling.sql",
           "013_remove_cumulative_risk_halt.sql",
           "015_double_structure_stop.sql",
+          "016_bounded_structure_levels.sql",
         ]
       : []),
   ])
@@ -511,10 +512,10 @@ test("a sell emits TP1 then TP2 exactly once at observed thresholds and cannot e
   const signal = (await db.query("select * from wg_signals")).rows[0];
   assert.equal(signal.direction, "sell");
   const goals = signal.targets.map(Number);
-  assert.deepEqual(goals, [4049.05, 4041.05, 4026.05]);
+  assert.deepEqual(goals, [4050, 4042, 4027]);
   assert.equal(
     signal.market_levels.method,
-    "confirmed-sampled-pivots-double-stop-v2",
+    "confirmed-sampled-pivots-bounded-stop-v3",
   );
   f.setQuote(goals[0] - 0.1);
   await f.run();
@@ -803,6 +804,7 @@ test("005 to 006 upgrade preserves a live v1 position, its deliveries, allocatio
     "010_telegram_sending_switch.sql",
     "011_market_structure_levels.sql",
     "015_double_structure_stop.sql",
+    "016_bounded_structure_levels.sql",
   ])
     await db.exec(
       await readFile(
