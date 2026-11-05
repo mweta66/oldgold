@@ -322,3 +322,31 @@ test("MT5 mode routes jobs to the broker engine, never fetches Gold API, and aut
   assert.equal(status.reason, "awaiting_mt5");
   assert.equal(status.price, null);
 });
+
+test("switching source ends a legacy open observation as unresolved without broker prices, invented fills or altered levels", async (t) => {
+  const db = await database(t);
+  await db.query(
+    "insert into wg_signals(request_id,symbol,direction,entry,stop,target,targets,reference_price,quote_at,status,opened_at,author_id,market_strategy) values('legacy-open','GOLDAPI:XAUUSD','buy',4000,3993,4012,array[4004,4008,4012],4000,now(),'open',now(),$1,'sampled-m15-8-21-m1-breakout-20-rolling5h-v2')",
+    [ADMIN],
+  );
+  await db.exec(
+    "update wg_market_state set signal_id=(select id from wg_signals)",
+  );
+  const r = (await db.query("select wg_mt5_market_tick() x")).rows[0].x;
+  assert.equal(r.reason, "awaiting_mt5");
+  const s = (
+    await db.query(
+      "select status,entry,stop,targets,targets_hit,market_resolution from wg_signals",
+    )
+  ).rows[0];
+  assert.equal(s.status, "unresolved");
+  assert.equal(s.market_resolution, "data_gap");
+  assert.equal(s.targets_hit, 0);
+  assert.equal(Number(s.entry), 4000);
+  assert.equal(Number(s.stop), 3993);
+  assert.deepEqual(s.targets.map(Number), [4004, 4008, 4012]);
+  assert.equal(
+    (await db.query("select signal_id from wg_market_state")).rows[0].signal_id,
+    null,
+  );
+});

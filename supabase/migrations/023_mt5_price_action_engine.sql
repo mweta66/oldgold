@@ -166,6 +166,15 @@ begin
  perform set_config('wetagold.market_worker','on',true);
  select * into m from wg_market_state where id=1 for update;
  select * into f from wg_mt5_feed where id=1;
+ if m.signal_id is not null then
+  select * into s from wg_signals where id=m.signal_id for update;
+  if s.status='open' and s.market_strategy is distinct from 'mt5-m15-8-21-m1-pa-rebound-v1' then
+   update wg_signals set status='unresolved',market_resolution='data_gap' where id=s.id;
+   update wg_market_state set signal_id=null,last_exit_at=clock_timestamp() where id=1;
+   insert into wg_audit(actor_id,action,subject) values(s.author_id,'market.unresolved',s.id::text);
+   m.signal_id:=null;m.last_exit_at:=clock_timestamp();
+  end if;
+ end if;
  plan:=wg_mt5_market_plan();why:=plan->>'reason';
  if why='awaiting_mt5' then
   update wg_market_state set last_attempt_at=clock_timestamp(),reason=why,last_error='MT5_OFFLINE',lease=null,lease_until=null where id=1;
