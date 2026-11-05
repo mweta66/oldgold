@@ -17,7 +17,7 @@ function packet(now = Date.now()) {
     bars: [[at / 1000 - 60, 4045, 4048.1, 4024, 4048]],
   };
 }
-async function database(t) {
+async function database(t, latest = false) {
   const db = new PGlite();
   t.after(() => db.close());
   await db.exec(
@@ -25,7 +25,10 @@ async function database(t) {
   );
   const dir = new URL("../supabase/migrations/", import.meta.url);
   for (const f of (await readdir(dir))
-    .filter((x) => /^\d{3}_.*\.sql$/.test(x))
+    .filter(
+      (x) =>
+        /^\d{3}_.*\.sql$/.test(x) && (latest || Number(x.slice(0, 3)) < 25),
+    )
     .sort())
     await db.exec(await readFile(new URL(f, dir), "utf8"));
   await db.query("insert into auth.users values($1)", [ADMIN]);
@@ -104,30 +107,23 @@ test("TradingView validates true closed OANDA M1 OHLC, deduplicates rotating his
   ])
     assert.throws(() => validateTradingView({ ...p, ...patch }, now));
 });
-test("webhook requires its own scoped key, strips it before database calls, and never accepts trade instructions as a replacement for OHLC", async (t) => {
+test("cancelled webhook returns 410 even with legacy enabled flags and keys, without touching feeds", async (t) => {
   const key = "b".repeat(64),
     f = await fixture(t, {
       TRADINGVIEW_FEED_ENABLED: "true",
       TRADINGVIEW_FEED_TOKEN_HASH: digest(key),
     });
-  let r = await f.request("/api/tradingview/ingest", {
-    method: "POST",
-    data: packet(),
-  });
-  assert.equal(r.status, 401);
-  r = await f.request("/api/tradingview/ingest", {
-    method: "POST",
-    data: { ...packet(), key },
-  });
-  assert.equal(r.status, 200);
-  const call = f.calls.find((c) => c.path === "/rest/v1/rpc/wg_tv_ingest");
-  assert.equal(call.data.p_payload.key, undefined);
-  r = await f.request("/api/tradingview/ingest", {
-    method: "POST",
-    data: { key, direction: "buy", entry: 4000 },
-  });
-  assert.equal(r.status, 400);
+  for (const data of [packet(), { ...packet(), key }]) {
+    const r = await f.request("/api/tradingview/ingest", {
+      method: "POST",
+      data,
+    });
+    assert.equal(r.status, 410);
+    assert.equal(r.body.code, "TRADINGVIEW_DISABLED");
+  }
+  assert(!f.calls.some((c) => c.path === "/rest/v1/rpc/wg_tv_ingest"));
 });
+
 test("native fallback publishes mirrored TV signals from reference closes, never fabricates bid/ask, and pins open trades to their source", async (t) => {
   for (const sell of [false, true]) {
     const db = await database(t);
@@ -226,5 +222,38 @@ test("closed-minute history is causal, retry-safe and separate; no data means no
   assert.equal(
     (await db.query("select count(*)::int n from wg_signals")).rows[0].n,
     0,
+  );
+});
+
+test("025 disables every TV entry path and restores the MT5-only tick without deleting history", async (t) => {
+  const db = await database(t, true);
+  await db.query(
+    "insert into wg_tv_feed(id,price,time_ms,sent_ms) values(1,4048,$1,$2)",
+    [Math.floor(Date.now() / 60000) * 60000, Date.now()],
+  );
+  const selected = (await db.query("select wg_market_selected_source() x"))
+    .rows[0].x;
+  assert.equal(selected.source, "MT5:xauusd.s");
+  assert.equal(selected.plan.reason, "awaiting_mt5");
+  assert.equal(
+    (await db.query("select wg_mt5_market_tick() x")).rows[0].x.reason,
+    "awaiting_mt5",
+  );
+  await assert.rejects(
+    db.query("select wg_tv_ingest('{}')"),
+    /TRADINGVIEW_DISABLED/,
+  );
+  assert.equal(
+    (await db.query("select count(*)::int n from wg_tv_feed")).rows[0].n,
+    1,
+  );
+  assert.equal(
+    (await db.query("select count(*)::int n from wg_signals")).rows[0].n,
+    0,
+  );
+  await db.exec("set role service_role");
+  await assert.rejects(
+    db.query("select wg_tv_market_plan()"),
+    /permission denied/,
   );
 });
