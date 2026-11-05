@@ -128,3 +128,38 @@ test("authenticated preview endpoint sends one isolated batch, audits real recei
   assert.equal(duplicate.body.duplicate, true);
   assert.equal(f.sent.length, 4);
 });
+
+test("numeric test2 sends only a labelled hypothetical publication and rejects stale prices", async () => {
+  const calls = [];
+  const example = {
+    at: new Date().toISOString(),
+    direction: "buy",
+    entry: 4123.3,
+    stop: 4116.17,
+    targets: [4127.43, 4131.56, 4135.69],
+  };
+  const opts = {
+    example,
+    destination: "-1001",
+    onSent: async () => {},
+    call: async (method, body) => {
+      calls.push(body);
+      return { message_id: 101, chat: { id: -1001 } };
+    },
+  };
+  await sendTelegramPreview(opts);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].text, /^test2\n/);
+  assert.match(calls[0].text, /ليس إشارة دخول/);
+  assert.match(calls[0].text, /Buy entry 4123.30\$/);
+  assert.match(calls[0].text, /Sl 4116.17\$/);
+  assert.doesNotMatch(calls[0].text, /✅/);
+  await assert.rejects(
+    sendTelegramPreview({
+      ...opts,
+      example: { ...example, at: new Date(Date.now() - 120000).toISOString() },
+    }),
+    /stale/,
+  );
+  assert.equal(calls.length, 1);
+});
