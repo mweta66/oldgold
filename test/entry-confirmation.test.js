@@ -21,62 +21,37 @@ function fixture(sell = false) {
   }).slice(0, -1);
   return { q, quote: { at: at + 1000, price: adapt(4033) }, adapt };
 }
-test("closed-price momentum permits buy and sell symmetrically without manufacturing candles", () => {
-  for (const sell of [false, true]) {
-    const { q, quote } = fixture(sell);
-    const p = goldDecision([...q, quote], quote);
-    assert.equal(p.reason, "ready");
-    assert.equal(p.decision.direction, sell ? "sell" : "buy");
-    const c = p.decision.levelsBasis.entryConfirmation;
-    assert.equal(c.method, "closed-reference-momentum-v1");
-    assert.equal(c.trendSlopeConfirmed, true);
-    assert.equal(c.closedReferences.length, 3);
-    assert.equal(c.entryDelayMs, 1000);
-    assert(c.entryDrift <= 1);
-  }
-});
-test("source-minute cutoff and maximum entry drift are inclusive and symmetric", () => {
+test("019 restores buy/sell v2 levels and removes 016/017 entry filters", () => {
   for (const sell of [false, true]) {
     const { q, quote, adapt } = fixture(sell);
-    for (const delay of [15000, 15001, 30000]) {
-      const candidate = { ...quote, at: at + delay };
-      assert.equal(
-        goldDecision([...q, candidate], candidate).reason,
-        delay <= 15000 ? "ready" : "late_entry",
+    for (const candidate of [
+      quote,
+      { ...quote, at: at + 30000 },
+      { ...quote, price: adapt(4035) },
+    ]) {
+      const p = goldDecision([...q, candidate], candidate);
+      assert.equal(p.reason, "ready");
+      assert.equal(p.strategy, "sampled-m15-8-21-m1-breakout-20-rolling5h-v2");
+      assert.equal(p.decision.direction, sell ? "sell" : "buy");
+      assert.equal(p.decision.levelsBasis, undefined);
+      const d = Number(Math.abs(p.decision.entry - p.decision.stop).toFixed(2));
+      assert(
+        d < 6,
+        "Old volatility stop must not be clamped to the cancelled $6 minimum",
       );
+      for (let i = 0; i < 3; i++)
+        assert(
+          Math.abs(
+            Math.abs(p.decision.targets[i] - p.decision.entry) - d * (i + 1),
+          ) < 0.001,
+        );
     }
-    for (const drift of [1, 1.01, 3]) {
-      const candidate = { ...quote, price: adapt(4032.9 + drift) };
-      assert.equal(
-        goldDecision([...q, candidate], candidate).reason,
-        drift <= 1 ? "ready" : "stretched_entry",
-      );
-    }
-  }
-});
-test("lagging EMA direction cannot authorize an entry after the last completed M15 move turns against it", () => {
-  for (const sell of [false, true]) {
-    const { q, quote, adapt } = fixture(sell);
     q[330 - 23].price = adapt(4033.1);
     q[330 - 8].price = adapt(4032.1);
-    const p = goldDecision([...q, quote], quote);
-    assert.equal(p.reason, "weak_momentum");
-    assert.equal(p.decision, null);
-  }
-});
-test("current-minute price spikes and future observations cannot replace closed confirmation", () => {
-  for (const sell of [false, true]) {
-    const { q, quote, adapt } = fixture(sell);
-    const normal = goldDecision([...q, quote], quote);
-    assert.deepEqual(
-      goldDecision(
-        [...q, quote, { at: at + minute, price: adapt(4500) }],
-        quote,
-      ),
-      normal,
+    assert.equal(
+      goldDecision([...q, quote], quote).reason,
+      "ready",
+      "The cancelled M15-slope entry gate must no longer apply",
     );
-    q.at(-1).price = q.at(-2).price;
-    const p = goldDecision([...q, quote], quote);
-    assert.equal(p.decision, null);
   }
 });

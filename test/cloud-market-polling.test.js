@@ -12,6 +12,7 @@ async function database(
     beforeRiskRemoval = false,
     beforeBoundedLevels = false,
     beforeEntryConfirmation = false,
+    beforeRollback = false,
   } = {},
 ) {
   const db = new PGlite();
@@ -29,7 +30,8 @@ async function database(
         /^\d{3}_.*\.sql$/.test(x) &&
         !(beforeRiskRemoval && Number(x.slice(0, 3)) >= 13) &&
         !(beforeBoundedLevels && Number(x.slice(0, 3)) >= 16) &&
-        !(beforeEntryConfirmation && x.startsWith("017_")),
+        !(beforeEntryConfirmation && Number(x.slice(0, 3)) >= 17) &&
+        !(beforeRollback && x.startsWith("019_")),
     )
     .sort())
     await db.exec(await readFile(new URL(name, dir), "utf8"));
@@ -91,7 +93,7 @@ test("native cloud plan exactly matches the JavaScript causal strategy across al
   }
 });
 
-test("cloud quotes publish real v3 levels and track TP/SL without an external history transfer or post-stop goals", async (t) => {
+test("cloud quotes publish restored volatility levels and track TP/SL without an external history transfer or post-stop goals", async (t) => {
   const db = await database(t),
     at = Math.floor(Date.now() / minute) * minute + 1000,
     end = Math.floor(at / minute) * minute;
@@ -118,9 +120,10 @@ test("cloud quotes publish real v3 levels and track TP/SL without an external hi
     false,
   );
   const signal = (await db.query("select * from wg_signals")).rows[0];
+  assert.equal(signal.market_levels, null);
   assert.equal(
-    signal.market_levels.method,
-    "confirmed-sampled-pivots-bounded-stop-v3",
+    signal.market_strategy,
+    "sampled-m15-8-21-m1-breakout-20-rolling5h-v2",
   );
   assert.equal(
     (await db.query("select used from wg_profiles where role='member'")).rows[0]
@@ -382,7 +385,7 @@ test("016 preserves active signal levels, history, quota and deliveries while re
   assert.equal(active.targets_hit, 1);
 });
 
-test("entry confirmation SQL matches causal JavaScript across late, stretched and mirrored sell entries", async (t) => {
+test("restored v2 SQL matches JavaScript across source times, drift and mirrored sell entries", async (t) => {
   const db = await database(t);
   const end = Math.floor(Date.now() / minute) * minute;
   for (const sell of [false, true]) {
@@ -413,7 +416,7 @@ test("entry confirmation SQL matches causal JavaScript across late, stretched an
 test("native buy and sell publications both persist independently verified entry confirmation", async (t) => {
   const at = Math.floor(Date.now() / minute) * minute + 1000;
   for (const sell of [false, true]) {
-    const db = await database(t);
+    const db = await database(t, { beforeRollback: true });
     await db.query("select wg_market_config($1,true)", [ADMIN]);
     await db.exec(
       "update wg_market_state set signal_id=null,last_quote_at=null,last_decision_at=null,last_exit_at=null;delete from wg_market_quotes",
@@ -446,8 +449,8 @@ test("native buy and sell publications both persist independently verified entry
 });
 
 test("a forged ready plan cannot bypass late-entry validation at the database commit", async (t) => {
-  const db = await database(t);
-  const at = Math.floor(Date.now() / minute) * minute - 30000;
+  const db = await database(t, { beforeRollback: true });
+  const at = Math.floor((Date.now() - 20000) / minute) * minute + 20000;
   await seed(db, history(Math.floor(at / minute) * minute).slice(0, -1));
   await db.query("select wg_market_config($1,true)", [ADMIN]);
   const context = (await db.query("select wg_market_claim() x")).rows[0].x;
@@ -533,5 +536,72 @@ test("017 preserves a running trade and its levels, events, quota and deliveries
     (await db.query("select wg_market_risk_limit_enabled() enabled")).rows[0]
       .enabled,
     false,
+  );
+});
+
+test("019 restores the effective pre-016 strategy without changing trades, levels, quotas, delivery history or the disabled loss limit", async (t) => {
+  const db = await database(t, { beforeRollback: true });
+  const at = Math.floor(Date.now() / minute) * minute + 1000;
+  await seed(db, history(Math.floor(at / minute) * minute).slice(0, -1));
+  await db.query("select wg_market_config($1,true)", [ADMIN]);
+  await db.exec("update wg_market_state set loss_used=10000");
+  await db.query("select wg_market_cloud_quote($1::jsonb)", [
+    JSON.stringify(payload(4033, at)),
+  ]);
+  const snapshot = async () =>
+    (
+      await db.query(`select jsonb_build_object(
+ 'signals',(select jsonb_agg(to_jsonb(s) order by id) from wg_signals s),
+ 'events',(select jsonb_agg(to_jsonb(s) order by id) from wg_signal_events s),
+ 'outbox',(select jsonb_agg(to_jsonb(s) order by id) from wg_outbox s),
+ 'profiles',(select jsonb_agg(to_jsonb(s) order by id) from wg_profiles s),
+ 'loss',(select loss_used from wg_market_state)) x`)
+    ).rows[0].x;
+  const before = await snapshot();
+  assert.equal(
+    before.signals[0].market_levels.entryConfirmation.method,
+    "closed-reference-momentum-v1",
+  );
+  await db.exec(
+    await readFile(
+      new URL(
+        "../supabase/migrations/019_rollback_strategy_016_017.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(await snapshot(), before);
+  const plan = (
+    await db.query("select wg_market_cloud_plan($1,4033) x", [
+      new Date(at + 30000).toISOString(),
+    ])
+  ).rows[0].x;
+  assert.equal(plan.strategy, "sampled-m15-8-21-m1-breakout-20-rolling5h-v2");
+  assert.equal(plan.reason, "ready");
+  assert.equal(plan.decision.levelsBasis, undefined);
+  assert.equal(
+    (await db.query("select wg_market_risk_limit_enabled() enabled")).rows[0]
+      .enabled,
+    false,
+  );
+  assert.notEqual(
+    (
+      await db.query(
+        "select to_regprocedure('wg_mt5_execution_feed(bigint)') x",
+      )
+    ).rows[0].x,
+    null,
+  );
+  await db.query("select wg_market_cloud_quote($1::jsonb)", [
+    JSON.stringify(payload(Number(before.signals[0].targets[0]), at + 1)),
+  ]);
+  const s = (await db.query("select stop,targets,targets_hit from wg_signals"))
+    .rows[0];
+  assert.equal(s.targets_hit, 1);
+  assert.equal(Number(s.stop), Number(before.signals[0].stop));
+  assert.deepEqual(
+    s.targets.map(Number),
+    before.signals[0].targets.map(Number),
   );
 });
