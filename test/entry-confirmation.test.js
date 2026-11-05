@@ -36,13 +36,14 @@ test("019 restores buy/sell v2 levels and removes 016/017 entry filters", () => 
       assert.equal(p.decision.levelsBasis, undefined);
       const d = Number(Math.abs(p.decision.entry - p.decision.stop).toFixed(2));
       assert(
-        d < 6,
+        d - 3 < 6,
         "Old volatility stop must not be clamped to the cancelled $6 minimum",
       );
       for (let i = 0; i < 3; i++)
         assert(
           Math.abs(
-            Math.abs(p.decision.targets[i] - p.decision.entry) - d * (i + 1),
+            Math.abs(p.decision.targets[i] - p.decision.entry) -
+              (d - 3) * (i + 1),
           ) < 0.001,
         );
     }

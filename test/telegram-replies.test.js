@@ -54,7 +54,7 @@ function sender(rootId = null) {
 test("publication, TP1/TP2/TP3 and SL use clear emoji and always reply to the SAME original, not the previous goal", async () => {
   const f = sender();
   await deliverSignalMessage(f.context);
-  assert.match(f.requests[0].text, /^🟢 📈 BUY — شراء/);
+  assert.match(f.requests[0].text, /^🟢 📈 Buy entry/);
   assert.equal(f.requests[0].reply_parameters, undefined);
   const root = f.root;
   for (let n = 1; n <= 3; n++)
@@ -84,9 +84,9 @@ test("publication, TP1/TP2/TP3 and SL use clear emoji and always reply to the SA
     stop.requests[0].text,
     /^🏁 أُغلقت الصفقة على الاستوب بعد تحقيق TP1/,
   );
-  assert.match(stop.requests[0].text, /🛑 sl : 3990\.00\$ ❌/);
-  assert.match(stop.requests[0].text, /tp 1 : 4010\.00\$ ✅/);
-  assert.doesNotMatch(stop.requests[0].text, /tp 2 : 4020\.00\$ ✅/);
+  assert.match(stop.requests[0].text, /Sl 3990\.00\$ ❌/);
+  assert.match(stop.requests[0].text, /TP1 4010\.00\$ ✅/);
+  assert.doesNotMatch(stop.requests[0].text, /Tp2 4020\.00\$ ✅/);
   assert.equal(stop.requests[0].reply_parameters.message_id, 902);
 });
 

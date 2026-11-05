@@ -25,12 +25,11 @@ test("publication has BUY/SELL, dollar prices, ordered TP rows and SL last", () 
   assert.equal(
     compact(),
     [
-      "🟢 📈 BUY — شراء",
-      "🎯 entry : 4130.00$",
-      "🎯 tp 1 : 4135.00$",
-      "🎯 tp 2 : 4140.00$",
-      "🎯 tp 3 : 4145.00$",
-      "🛑 sl : 4125.00$",
+      "🟢 📈 Buy entry 4130.00$",
+      "TP1 4135.00$",
+      "Tp2 4140.00$",
+      "Tp3 4145.00$",
+      "Sl 4125.00$",
     ].join("\n"),
   );
   assert.doesNotMatch(compact(), /UTC|2026|Gold API/);
@@ -42,7 +41,7 @@ test("publication has BUY/SELL, dollar prices, ordered TP rows and SL last", () 
       targets: "[]",
       target: "4125.25",
     }),
-    "🔴 📉 SELL — بيع\n🎯 entry : 4130.00$\n🎯 tp 1 : 4125.25$\n🛑 sl : 4135.00$",
+    "🔴 📉 Sell entry 4130.00$\nTP1 4125.25$\nSl 4135.00$",
   );
 });
 
@@ -74,7 +73,7 @@ test("stops truthfully distinguish zero, one, and two achieved targets in both f
         assert.equal(text.includes("TP1 و TP2"), hit === 2);
         assert.doesNotMatch(text, /ربح محقق|إغلاق جزئي منفذ/);
       }
-      assert.match(text, /🛑 sl : 4125\.00\$ ❌/);
+      assert.match(text, /Sl 4125\.00\$ ❌/);
       assert.equal((text.match(/\$ ✅/g) || []).length, hit);
     }
 });
@@ -86,9 +85,9 @@ test("prices retain sub-cent precision, never fabricate extra targets, and do no
     targets: Object.freeze([4135.1234]),
   });
   const text = compact(s);
-  assert.match(text, /entry : 4130\.1234\$/);
-  assert.match(text, /tp 1 : 4135\.1234\$/);
-  assert.doesNotMatch(text, /tp 2|tp 3|4,130/);
+  assert.match(text, /entry 4130\.1234\$/);
+  assert.match(text, /TP1 4135\.1234\$/);
+  assert.doesNotMatch(text, /Tp2|Tp3|4,130/);
   assert.equal(s.entry, "4130.1234");
 });
 
@@ -102,4 +101,28 @@ test("unresolved results stay unresolved and private source/time context is reta
   assert.match(text, /Gold API/);
   assert.match(text, /وقت إصدار الإشارة UTC/);
   assert.match(text, /ليست تأكيد تنفيذ/);
+});
+
+test("publication is the same exact five-line layout in group and private; recovery still includes entry", async () => {
+  const { signalThreadAnchor } = await import("../lib/signal-message.js");
+  for (const direction of ["buy", "sell"]) {
+    const s = { ...signal, direction };
+    const text = signalMessage(s, { kind: "publish" });
+    assert.equal(
+      text,
+      signalMessage(s, { kind: "publish" }, { compact: true }),
+    );
+    assert.equal(text.split("\n").length, 5);
+    assert.equal(
+      text.split("\n")[0],
+      `${direction === "buy" ? "🟢 📈 Buy" : "🔴 📉 Sell"} entry 4130.00$`,
+    );
+    assert.match(
+      text,
+      /\nTP1 4135\.00\$\nTp2 4140\.00\$\nTp3 4145\.00\$\nSl 4125\.00\$$/,
+    );
+    const anchor = signalThreadAnchor(s);
+    assert.match(anchor, /ليست إشارة دخول جديدة/);
+    assert.match(anchor, /\nentry 4130\.00\$\nTP1/);
+  }
 });
