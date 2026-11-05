@@ -178,26 +178,23 @@ test("three targets each deliver their own ordered snapshot to the verified grou
     const texts = sent
       .filter((row) => row.chat_id === chat)
       .map((row) => row.text);
-    assert.equal(texts.length, 5);
+    assert.equal(texts.length, 4);
     if (chat === "-1001") {
       assert.match(texts[0], /^🟢 📈 Buy entry/);
       for (let n = 1; n <= 3; n++)
-        assert.match(
-          texts[n + 1],
-          new RegExp(`^✅ تحقق الهدف TP${n} — شراء\\n`),
-        );
-      assert.doesNotMatch(texts[2], /Tp2 102\.00\$ ✅/);
-      assert.match(texts[4], /Tp3 103\.00\$ ✅/);
+        assert.match(texts[n], new RegExp(`^✅ تحقق الهدف TP${n} — شراء\\n`));
+      assert.doesNotMatch(texts[1], /Tp2 102\.00\$ ✅/);
+      assert.match(texts[3], /Tp3 103\.00\$ ✅/);
       assert.ok(
         texts.every((text) => !/UTC|المصدر|مرجع التحديث|WetaGold/.test(text)),
       );
       continue;
     }
     for (let n = 1; n <= 3; n++)
-      assert.match(texts[n + 1], new RegExp(`تسجيل تحقق TP${n}`));
-    assert.doesNotMatch(texts[2], /Tp2 102 — مسجّل/);
-    assert.match(texts[4], /اكتملت الأهداف/);
-    assert.match(texts[4], /ليست تأكيد تنفيذ/);
+      assert.match(texts[n], new RegExp(`تسجيل تحقق TP${n}`));
+    assert.doesNotMatch(texts[1], /Tp2 102 — مسجّل/);
+    assert.match(texts[3], /اكتملت الأهداف/);
+    assert.match(texts[3], /ليست تأكيد تنفيذ/);
   }
   assert.equal(
     f.app.db.prepare("SELECT used FROM users WHERE email=?").get(input.email)
@@ -296,7 +293,7 @@ test("bot linking uses a one-time private-chat token and publishing queues real 
   );
 });
 
-test("private owner-managed group receives publication, opening, TP and SL; updates do not consume quotas", async (t) => {
+test("private owner-managed group receives publication, TP and SL while opening remains silent; updates do not consume quotas", async (t) => {
   const sent = [],
     methods = [];
   const f = await fixture({
@@ -351,10 +348,9 @@ test("private owner-managed group receives publication, opening, TP and SL; upda
   const memberTexts = sent
     .filter((s) => s.chat_id === "123")
     .map((s) => s.text);
-  assert.equal(memberTexts.length, 3);
+  assert.equal(memberTexts.length, 2);
   assert.match(memberTexts[0], /^🟢 📈 Buy entry/);
-  assert.match(memberTexts[1], /مفتوحة/);
-  assert.match(memberTexts[2], /تحقق الهدف TP/);
+  assert.match(memberTexts[1], /تحقق الهدف TP/);
   const next = await f.request("/api/admin/signals", {
     method: "POST",
     auth: admin,
@@ -363,7 +359,7 @@ test("private owner-managed group receives publication, opening, TP and SL; upda
   await f.app.telegram.flush();
   await update(next.body.id, "open");
   await update(next.body.id, "stopped");
-  assert.equal(sent.filter((s) => s.chat_id === "-1001").length, 6);
+  assert.equal(sent.filter((s) => s.chat_id === "-1001").length, 4);
   assert.ok(
     sent.every(
       (s) =>
@@ -372,7 +368,7 @@ test("private owner-managed group receives publication, opening, TP and SL; upda
     ),
   );
   assert.match(sent.at(-1).text, /وقف الخسارة SL/);
-  assert.equal(sent.filter((s) => s.chat_id === "123").length, 3);
+  assert.equal(sent.filter((s) => s.chat_id === "123").length, 2);
   assert.equal(
     f.app.db.prepare("SELECT used FROM users WHERE email=?").get(input.email)
       .used,

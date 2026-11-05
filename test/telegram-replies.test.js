@@ -443,14 +443,23 @@ test("two-hour time-limit updates are silent for group and private chat without 
     assert.equal(f.acknowledgements.length, 0);
   }
 });
-test("data-gap unresolved notifications remain deliverable", async () => {
-  const f = sender(100);
-  f.context.event = { kind: "status" };
-  f.context.snapshot = {
-    ...source,
-    status: "unresolved",
-    market_resolution: "data_gap",
-  };
-  await deliverSignalMessage(f.context);
-  assert.equal(f.requests.length, 1);
+test("unresolved, cancelled, expired and open-status notices are silent in group and private without roots or retryable delivery", async () => {
+  for (const user_id of [null, "member"])
+    for (const root of [null, 100])
+      for (const status of ["unresolved", "cancelled", "expired", "open"]) {
+        const f = sender(root);
+        f.context.row.user_id = user_id;
+        f.context.event = { kind: "status" };
+        f.context.snapshot = {
+          ...source,
+          status,
+          market_resolution: "data_gap",
+        };
+        await assert.rejects(deliverSignalMessage(f.context), {
+          status: 410,
+          code: "TELEGRAM_STATUS_SILENCED",
+        });
+        assert.equal(f.requests.length, 0);
+        assert.equal(f.acknowledgements.length, 0);
+      }
 });
