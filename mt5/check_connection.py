@@ -10,6 +10,19 @@ import subprocess
 
 
 def terminal_path():
+    # Prefer the already-open broker terminal; no account or process arguments are read.
+    if os.name == "nt":
+        try:
+            running = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command",
+                 "Get-Process terminal64 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path"],
+                capture_output=True, text=True, timeout=5, check=False)
+            for value in running.stdout.splitlines():
+                candidate = Path(value.strip())
+                if candidate.name.lower() == "terminal64.exe" and candidate.is_file():
+                    return str(candidate)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
     candidates = [
         Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "MetaTrader 5" / "terminal64.exe",
         Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "MetaTrader 5" / "terminal64.exe",

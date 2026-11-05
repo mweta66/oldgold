@@ -615,7 +615,7 @@ async function loadChart() {
       $("#chartSource").textContent =
         "MT5 من جهازك · تحديث تقريبي كل ثانية أثناء الاتصال";
       $("#chartNote").textContent =
-        "شموع MT5 للمدير فقط. محرك الإشارات الآلي ما زال يستخدم Gold API؛ لم يتم تحويله إلى MT5. تظل فجوات المصدر ظاهرة دون شموع مصطنعة.";
+        "التحليل الحالي يعتمد شموع MT5 الحقيقية. عند انقطاع المنصة تتوقف الإشارات الجديدة حتى عودة بيانات حديثة.";
       stopMt5Chart = mountHybridChart({
         container: $("#chartContainer"),
         status: $("#mt5ChartStatus"),
@@ -629,9 +629,9 @@ async function loadChart() {
           $("#chartSource").textContent =
             source === "mt5"
               ? "MT5 من جهازك · تحديث تقريبي كل ثانية · احتياطي سحابي تلقائي"
-              : "الوضع الاحتياطي · شارت OANDA من TradingView · سعر التحليل Gold API";
+              : "شارت OANDA مرئي فقط · انتظار اتصال MT5 للتحليل";
           $("#chartNote").textContent =
-            "محرك الإشارات الآلي ما زال يستخدم Gold API باستقلال عن جهازك. التحويل يبدّل مصدر العرض ولا يخلط أسعار الوسيط مع المصدر السحابي داخل الشموع أو الصفقات.";
+            "محرك الإشارات يعتمد MT5 فقط. شارت TradingView للعرض ولا يُستخدم بديلًا لأسعار التحليل.";
         },
       });
       return;
@@ -652,7 +652,7 @@ async function loadChart() {
   }
   if (sequence !== chartSequence || !canViewChart()) return;
   $("#chartSource").textContent =
-    "TradingView · OANDA:XAUUSD · مصدر مختلف عن Gold API";
+    "TradingView · OANDA:XAUUSD · للعرض فقط، منفصل عن تحليل MT5";
   $("#chartNote").textContent =
     "للمراجعة الشخصية للمدير فقط؛ لا يظهر للمشتركين ولا يُرسل إلى Telegram. ليس مرجع متابعة الإشارات الآلية.";
   $("#mt5ChartStatus").textContent = "";
@@ -739,6 +739,17 @@ function signalCard(signal) {
     );
   wrap.append(head, levels, meta);
   if (signal.marketStrategy) {
+    if (signal.levelsBasis?.method === "mt5-m1-pa-rebounds-v1") {
+      const b = signal.levelsBasis,
+        z = b.support;
+      wrap.append(
+        element(
+          "p",
+          `${z.kind === "support" ? "دعم" : "مقاومة"} ${price(z.level)} ±5$، ${z.touches} ارتدادات خلال 4 ساعات. تأكيد ${b.candle.pattern === "engulfing" ? "ابتلاع" : "شمعة رفض"} عند ${date(b.candle.time * 1000)} من شموع MT5 المكتملة.`,
+          "small",
+        ),
+      );
+    }
     if (signal.levelsBasis?.method === "m1-rebounds-4h-zone5-v1") {
       const b = signal.levelsBasis;
       wrap.append(
@@ -782,7 +793,9 @@ function signalCard(signal) {
     wrap.append(
       element(
         "p",
-        "إشارة آلية تجريبية · Gold API، وليس سعر وسيط. TP/SL عبور مرصود بين قراءات متقطعة، وليس تنفيذًا أو ربحًا فعليًا.",
+        signal.marketStrategy.startsWith("mt5-")
+          ? "إشارة من أسعار MT5. تحديث TP/SL رصد سعري، وليس تأكيد تنفيذ مركز فعلي."
+          : "إشارة آلية تجريبية · Gold API، وليس سعر وسيط. TP/SL عبور مرصود بين قراءات متقطعة، وليس تنفيذًا أو ربحًا فعليًا.",
         "small muted",
       ),
     );
@@ -1065,7 +1078,11 @@ function renderHistory() {
         "المصدر",
         element(
           "span",
-          signal.marketStrategy ? "Gold API · آلي تجريبي" : signal.symbol,
+          signal.marketStrategy?.startsWith("mt5-")
+            ? "MT5 · تأكيد برايس أكشن"
+            : signal.marketStrategy
+              ? "Gold API · آلي تجريبي"
+              : signal.symbol,
         ),
       ],
       ["الحالة", state],
@@ -1369,6 +1386,8 @@ function renderMarket() {
       "انتظار اكتمال آخر 30 دقيقة بعد انقطاع؛ البيانات السابقة محفوظة",
     awaiting_fresh_quote: "انتظار سعر حديث؛ الإشارات الجديدة متوقفة",
     no_setup: "المتابعة تعمل؛ لا توجد فرصة مطابقة للقواعد الآن",
+    awaiting_mt5: "انتظار أسعار وشموع MT5 حديثة؛ الإشارات الجديدة متوقفة",
+    no_price_action: "لم تتأكد شمعة ابتلاع أو رفض للمستوى في اتجاه الصفقة",
     no_structure:
       "لم يتأكد دعم أو مقاومة بثلاثة ارتدادات منفصلة خلال آخر 4 ساعات؛ لم تُنشأ إشارة",
     poor_reward:
@@ -1398,12 +1417,16 @@ function renderMarket() {
     ),
     element(
       "p",
-      `فحص آخر 5 ساعات متحركة: ${market.progressMinutes} / ${market.requiredMinutes} دقيقة مرصودة (الحد الأدنى ${market.minimumObservedMinutes ?? 295}). لا تُملأ الدقائق المفقودة ولا يبدأ التجميع من الصفر بعد انقطاع قصير.`,
+      market.source.startsWith("MT5:")
+        ? "التحليل من سجل MT5: اتجاه EMA8/21 على 15 دقيقة، و3 ارتدادات خلال 4 ساعات، وتأكيد شمعة مكتملة من آخر شمعتين. شرط اختراق الـ20 دقيقة ملغى."
+        : `فحص آخر 5 ساعات متحركة: ${market.progressMinutes} / ${market.requiredMinutes} دقيقة مرصودة (الحد الأدنى ${market.minimumObservedMinutes ?? 295}). لا تُملأ الدقائق المفقودة ولا يبدأ التجميع من الصفر بعد انقطاع قصير.`,
       "small",
     ),
     element(
       "p",
-      `الجزء الحديث: ${market.recentObservedMinutes ?? 0} / ${market.recentRequiredMinutes ?? 30} دقيقة؛ أكبر فاصل حديث ${market.recentMaxGapSeconds ?? 0} ثانية (الحد 90). تهيئة اتجاه M15: ${market.trendBars ?? 0} شمعة مكتملة (الحد الأدنى ${market.requiredTrendBars ?? 21})، من سجل محفوظ حتى 8 ساعات. الإشارة تتطلب سلامة البيانات ومطابقة القواعد.`,
+      market.source.startsWith("MT5:")
+        ? "يُشترط سجل متصل لآخر 240 دقيقة و21 شمعة M15 مكتملة على الأقل، وسعر وسيط لا يتجاوز عمره15 ثانية. لا تُملأ الفجوات ولا تُستخدم شمعة لسه بتتكوّن كتأكيد."
+        : `الجزء الحديث: ${market.recentObservedMinutes ?? 0} / ${market.recentRequiredMinutes ?? 30} دقيقة؛ أكبر فاصل حديث ${market.recentMaxGapSeconds ?? 0} ثانية (الحد 90). تهيئة اتجاه M15: ${market.trendBars ?? 0} شمعة مكتملة (الحد الأدنى ${market.requiredTrendBars ?? 21})، من سجل محفوظ حتى 8 ساعات. الإشارة تتطلب سلامة البيانات ومطابقة القواعد.`,
       "small",
     ),
     element(

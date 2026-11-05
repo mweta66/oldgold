@@ -43,6 +43,26 @@ class FeedTests(unittest.TestCase):
                 raise AssertionError("Must not collect prices from another server")
         self.assertIsNone(snapshot(Fake(), {"symbol":"XAUUSD","server":"MetaQuotes-Demo"}, 100000))
 
+    def test_auto_server_binds_once_and_refuses_a_later_account_switch(self):
+        class Fake:
+            TIMEFRAME_M1 = 1
+            server = "Owner-Broker"
+            def terminal_info(self):
+                return SimpleNamespace(connected=True)
+            def account_info(self):
+                return SimpleNamespace(server=self.server)
+            def symbol_info_tick(self, symbol):
+                return SimpleNamespace(bid=4000, ask=4001, time_msc=99999)
+            def copy_rates_from_pos(self, *args):
+                return [{"time":60,"open":4001,"high":4002,"low":3999,"close":4000,"tick_volume":12}]
+        fake=Fake()
+        config={"symbol":"xauusd.s","server":"AUTO"}
+        data=snapshot(fake,config,100000)
+        self.assertEqual(data["server"],"Owner-Broker")
+        self.assertEqual(config["server"],"Owner-Broker")
+        fake.server="Another-Broker"
+        self.assertIsNone(snapshot(fake,config,100000))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,6 +38,7 @@ async function database(t, beforeRebound = false) {
     .filter(
       (x) =>
         /^\d{3}_.*\.sql$/.test(x) &&
+        Number(x.slice(0, 3)) < 23 &&
         (!beforeRebound || Number(x.slice(0, 3)) < 22),
     )
     .sort())

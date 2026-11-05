@@ -41,8 +41,10 @@ def snapshot(mt5, config, now_ms):
         return None
     # Check only the server identity; never serialize account_info or balances.
     account = mt5.account_info()
-    if account is None or account.server != config["server"]:
+    if account is None or (config["server"] != "AUTO" and account.server != config["server"]):
         return None
+    if config["server"] == "AUTO":
+        config["server"] = account.server
     tick = mt5.symbol_info_tick(config["symbol"])
     if (tick is None or not all(math.isfinite(x) and x > 0 for x in (tick.bid, tick.ask))
             or tick.ask < tick.bid or not now_ms-15000 <= tick.time_msc <= now_ms+5000):
@@ -123,7 +125,7 @@ def main():
                         break
                     if data is None or int(time.time()*1000)-data["timeMs"] > 15000:
                         if last_status != "waiting":
-                            print("Waiting for a fresh, non-zero XAUUSD quote and M1 history in MT5.", flush=True)
+                            print("Waiting for fresh broker quotes and M1 history in MT5.", flush=True)
                         last_status = "waiting"
                         continue
                     bars = data.pop("bars")

@@ -219,6 +219,13 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
     assert.equal(headers.get("apikey"), env.SUPABASE_SERVICE_ROLE_KEY);
     if (url.pathname.startsWith("/rest/v1/rpc/")) {
       const name = url.pathname.split("/").pop();
+      if (name === "wg_mt5_market_tick")
+        return json({
+          ok: true,
+          reason: "awaiting_mt5",
+          source: "MT5:xauusd.s",
+        });
+      if (name === "wg_mt5_ingest") return json({ ok: true, skipped: false });
       if (
         name === "wg_telegram_record_root" ||
         name === "wg_telegram_mark_sent"
