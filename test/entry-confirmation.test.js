@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { goldDecision } from "../lib/gold-market.js";
+import { goldBreakoutDecision as goldDecision } from "../lib/gold-market.js";
 const minute = 60000;
 const at = Date.UTC(2026, 10, 4, 20, 7);
 function fixture(sell = false) {

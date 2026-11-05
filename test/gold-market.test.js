@@ -7,7 +7,7 @@ import {
   GOLD_STRATEGY,
   parseGoldQuote,
   sampledCloses,
-  goldDecision,
+  goldBreakoutDecision as goldDecision,
   goldTracking,
   marketStatus,
 } from "../lib/gold-market.js";
@@ -287,7 +287,9 @@ async function database(
       ],
     );
   }
+  // This suite pins pre-022 upgrade and tracking behavior. The current gate is covered in rebound-confirmation.test.js.
   const worker = createGoldWorker({
+    decide: goldDecision,
     rpc,
     fetchImpl: async () => {
       requests++;

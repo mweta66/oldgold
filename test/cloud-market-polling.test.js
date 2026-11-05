@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import { goldDecision } from "../lib/gold-market.js";
+import { goldBreakoutDecision as goldDecision } from "../lib/gold-market.js";
 const ADMIN = "00000000-0000-4000-8000-000000000001",
   MEMBER = "00000000-0000-4000-8000-000000000002",
   minute = 60000;
@@ -29,6 +29,8 @@ async function database(
     .filter(
       (x) =>
         /^\d{3}_.*\.sql$/.test(x) &&
+        // Historical 012–020 behavior. Latest planner/commit parity is tested in rebound-confirmation.test.js.
+        Number(x.slice(0, 3)) < 22 &&
         !(beforeRiskRemoval && Number(x.slice(0, 3)) >= 13) &&
         !(beforeBoundedLevels && Number(x.slice(0, 3)) >= 16) &&
         !(beforeEntryConfirmation && Number(x.slice(0, 3)) >= 17) &&

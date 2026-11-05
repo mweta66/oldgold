@@ -739,6 +739,16 @@ function signalCard(signal) {
     );
   wrap.append(head, levels, meta);
   if (signal.marketStrategy) {
+    if (signal.levelsBasis?.method === "m1-rebounds-4h-zone5-v1") {
+      const b = signal.levelsBasis;
+      wrap.append(
+        element(
+          "p",
+          `${b.kind === "support" ? "دعم" : "مقاومة"} عند ${price(b.level)}، منطقة ${price(b.lower)}–${price(b.upper)}، ${b.touches} ارتدادات منفصلة خلال 4 ساعات من إغلاقات الدقيقة المرصودة.`,
+          "small",
+        ),
+      );
+    }
     if (
       [
         "confirmed-sampled-pivots-v1",
@@ -1360,7 +1370,7 @@ function renderMarket() {
     awaiting_fresh_quote: "انتظار سعر حديث؛ الإشارات الجديدة متوقفة",
     no_setup: "المتابعة تعمل؛ لا توجد فرصة مطابقة للقواعد الآن",
     no_structure:
-      "لا توجد قمم وقيعان مؤكدة مناسبة للوقف والأهداف؛ لم تُنشأ إشارة بديلة",
+      "لم يتأكد دعم أو مقاومة بثلاثة ارتدادات منفصلة خلال آخر 4 ساعات؛ لم تُنشأ إشارة",
     poor_reward:
       "أقرب دعم أو مقاومة لا يوفّر عائدًا مناسبًا مقارنة بالوقف؛ لم تُنشأ إشارة",
     active_position: "توجد صفقة قيد المتابعة",
