@@ -239,6 +239,7 @@ async function database(
           "016_bounded_structure_levels.sql",
           "017_entry_confirmation.sql",
           "019_rollback_strategy_016_017.sql",
+          "020_extra_stop_3_dollars.sql",
         ]
       : []),
   ])
@@ -535,6 +536,7 @@ test("a sell emits TP1 then TP2 exactly once at observed thresholds and cannot e
   assert.equal(signal.direction, "sell");
   const goals = signal.targets.map(Number);
   assert.deepEqual(goals, [4053.94, 4049.88, 4045.82]);
+  assert.equal(Number(signal.stop), 4065.06);
   assert.equal(signal.market_levels, null);
   f.setQuote(goals[0] - 0.1);
   await f.run();
@@ -826,6 +828,7 @@ test("005 to 006 upgrade preserves a live v1 position, its deliveries, allocatio
     "016_bounded_structure_levels.sql",
     "017_entry_confirmation.sql",
     "019_rollback_strategy_016_017.sql",
+    "020_extra_stop_3_dollars.sql",
   ])
     await db.exec(
       await readFile(

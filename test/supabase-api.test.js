@@ -959,13 +959,11 @@ test("Supabase Telegram webhook/job are secret-protected and publishing sends te
         !/iframe|widgetembed|data:image|tradingview\.com/i.test(s.text),
     ),
   );
-  assert.match(f.sent.find((s) => s.chat_id === "1001").text, /OANDA:XAUUSD/);
+  const privateMessage = f.sent.find((s) => s.chat_id === "1001").text;
   const groupMessage = f.sent.find((s) => s.chat_id === "-1001").text;
-  assert.match(groupMessage, /^🟢 📈 BUY — شراء\n🎯 entry :/);
-  assert.match(
-    groupMessage,
-    /entry : 100\.00\$\n🎯 tp 1 : 101\.50\$\n🛑 sl : 99\.00\$/,
-  );
+  assert.equal(privateMessage, groupMessage);
+  assert.match(groupMessage, /^🟢 📈 Buy entry/);
+  assert.match(groupMessage, /entry 100\.00\$\nTP1 101\.50\$\nSl 99\.00\$/);
   assert.doesNotMatch(groupMessage, /UTC|OANDA|المصدر|مرجع التحديث|WetaGold/);
   assert.equal(f.tables.wg_outbox[0].state, "sent");
   assert.equal(

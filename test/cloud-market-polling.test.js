@@ -13,6 +13,7 @@ async function database(
     beforeBoundedLevels = false,
     beforeEntryConfirmation = false,
     beforeRollback = false,
+    beforeStopOffset = false,
   } = {},
 ) {
   const db = new PGlite();
@@ -31,7 +32,8 @@ async function database(
         !(beforeRiskRemoval && Number(x.slice(0, 3)) >= 13) &&
         !(beforeBoundedLevels && Number(x.slice(0, 3)) >= 16) &&
         !(beforeEntryConfirmation && Number(x.slice(0, 3)) >= 17) &&
-        !(beforeRollback && x.startsWith("019_")),
+        !(beforeRollback && Number(x.slice(0, 3)) >= 19) &&
+        !(beforeStopOffset && Number(x.slice(0, 3)) >= 20),
     )
     .sort())
     await db.exec(await readFile(new URL(name, dir), "utf8"));
@@ -603,5 +605,70 @@ test("019 restores the effective pre-016 strategy without changing trades, level
   assert.deepEqual(
     s.targets.map(Number),
     before.signals[0].targets.map(Number),
+  );
+});
+
+test("020 moves only the new stop $3 farther while preserving entries, targets and existing positions", async (t) => {
+  const db = await database(t, { beforeStopOffset: true });
+  const at = Math.floor(Date.now() / minute) * minute + 1000;
+  await seed(db, history(Math.floor(at / minute) * minute).slice(0, -1));
+  await db.query("select wg_market_config($1,true)", [ADMIN]);
+  await db.query("select wg_market_cloud_quote($1::jsonb)", [
+    JSON.stringify(payload(4033, at)),
+  ]);
+  const beforePlan = (
+    await db.query("select wg_market_cloud_plan($1,4033) x", [
+      new Date(at).toISOString(),
+    ])
+  ).rows[0].x;
+  const snapshot = async () =>
+    (
+      await db.query(`select jsonb_build_object(
+ 'signals',(select jsonb_agg(to_jsonb(s) order by id) from wg_signals s),
+ 'events',(select jsonb_agg(to_jsonb(s) order by id) from wg_signal_events s),
+ 'outbox',(select jsonb_agg(to_jsonb(s) order by id) from wg_outbox s),
+ 'profiles',(select jsonb_agg(to_jsonb(s) order by id) from wg_profiles s)) x`)
+    ).rows[0].x;
+  const before = await snapshot();
+  assert.equal(beforePlan.reason, "ready");
+  await db.exec(
+    await readFile(
+      new URL(
+        "../supabase/migrations/020_extra_stop_3_dollars.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(await snapshot(), before);
+  const afterPlan = (
+    await db.query("select wg_market_cloud_plan($1,4033) x", [
+      new Date(at).toISOString(),
+    ])
+  ).rows[0].x;
+  assert.deepEqual(
+    {
+      ...afterPlan,
+      decision: { ...afterPlan.decision, stop: beforePlan.decision.stop },
+    },
+    beforePlan,
+  );
+  assert.equal(
+    Number((beforePlan.decision.stop - afterPlan.decision.stop).toFixed(2)),
+    3,
+  );
+  assert.equal(afterPlan.decision.stop, 4025.96);
+  await db.query("select wg_market_cloud_quote($1::jsonb)", [
+    JSON.stringify(payload(Number(before.signals[0].stop), at + 1)),
+  ]);
+  assert.equal(
+    (await db.query("select status from wg_signals")).rows[0].status,
+    "stopped",
+    "The original position still uses its original stop",
+  );
+  assert.equal(
+    (await db.query("select wg_market_risk_limit_enabled() enabled")).rows[0]
+      .enabled,
+    false,
   );
 });
