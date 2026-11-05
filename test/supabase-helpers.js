@@ -275,6 +275,21 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
             );
         return json({ enabled: data.p_enabled, changed });
       }
+      if (name === "wg_telegram_preview_claim") {
+        if (
+          tables.wg_audit.some(
+            (x) =>
+              x.action === "telegram.preview.run" && x.subject === data.p_run,
+          )
+        )
+          return json({ claimed: false });
+        tables.wg_audit.push({
+          actor_id: ADMIN,
+          action: "telegram.preview.run",
+          subject: data.p_run,
+        });
+        return json({ claimed: true, actorId: ADMIN });
+      }
       if (name === "wg_market_risk_limit_enabled") return json(false);
       if (name === "wg_market_config")
         tables.wg_market_state[0].enabled = data.p_enabled;
