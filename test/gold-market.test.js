@@ -13,6 +13,7 @@ import {
 } from "../lib/gold-market.js";
 import { createGoldWorker } from "../lib/gold-worker.js";
 import { signalMessage } from "../lib/signal-message.js";
+import { structureLevels } from "../lib/market-structure.js";
 import { fixture } from "./supabase-helpers.js";
 
 const MINUTE = 60000;
@@ -237,6 +238,7 @@ async function database(
           "015_double_structure_stop.sql",
           "016_bounded_structure_levels.sql",
           "017_entry_confirmation.sql",
+          "019_rollback_strategy_016_017.sql",
         ]
       : []),
   ])
@@ -464,7 +466,19 @@ test("v3 refuses forged levels atomically and stores independently recomputed ma
   const f = await database(t),
     context = await f.rpc("wg_market_claim", {}),
     quote = f.quote;
-  const analysis = goldDecision([...context.quotes, quote], quote);
+  const base = goldDecision([...context.quotes, quote], quote);
+  const analysis = {
+    ...base,
+    strategy: "sampled-m15-8-21-m1-structure-v3",
+    decision: {
+      ...base.decision,
+      ...structureLevels(
+        sampledCloses(context.quotes, quote.at),
+        base.decision.direction,
+        base.decision.entry,
+      ).decision,
+    },
+  };
   assert.equal(analysis.reason, "ready");
   const count = (
     await f.db.query("select count(*)::int n from wg_market_quotes")
@@ -499,7 +513,14 @@ test("v3 refuses forged levels atomically and stores independently recomputed ma
     p_lease: context.lease,
     p_code: "GOLD_WORKER_FAILED",
   });
-  await f.run();
+  await f.db.exec("update wg_market_state set last_attempt_at=null");
+  const next = await f.rpc("wg_market_claim", {});
+  await f.rpc("wg_market_commit", {
+    p_lease: next.lease,
+    p_quote: { at: new Date(quote.at).toISOString(), price: quote.price },
+    p_plan: analysis,
+    p_group_chat: "-1001",
+  });
   const signal = (await f.db.query("select market_levels from wg_signals"))
     .rows[0];
   assert.deepEqual(signal.market_levels, analysis.decision.levelsBasis);
@@ -513,11 +534,8 @@ test("a sell emits TP1 then TP2 exactly once at observed thresholds and cannot e
   const signal = (await db.query("select * from wg_signals")).rows[0];
   assert.equal(signal.direction, "sell");
   const goals = signal.targets.map(Number);
-  assert.deepEqual(goals, [4050, 4042, 4027]);
-  assert.equal(
-    signal.market_levels.method,
-    "confirmed-sampled-pivots-bounded-stop-v3",
-  );
+  assert.deepEqual(goals, [4053.94, 4049.88, 4045.82]);
+  assert.equal(signal.market_levels, null);
   f.setQuote(goals[0] - 0.1);
   await f.run();
   f.setQuote(goals[0] - 0.2);
@@ -807,6 +825,7 @@ test("005 to 006 upgrade preserves a live v1 position, its deliveries, allocatio
     "015_double_structure_stop.sql",
     "016_bounded_structure_levels.sql",
     "017_entry_confirmation.sql",
+    "019_rollback_strategy_016_017.sql",
   ])
     await db.exec(
       await readFile(
