@@ -1,0 +1,23 @@
+//@version=6
+indicator("xtele OANDA M1 fallback feed", overlay = true, max_bars_back = 500)
+feedKey = input.string("", "Private price feed key")
+if not chart.is_standard or syminfo.tickerid != "OANDA:XAUUSD" or timeframe.period != "1"
+    runtime.error("Use OANDA:XAUUSD on the 1-minute chart.")
+// One alert per CLOSED realtime minute; no historical alert storm.
+// Rotate 40 history bars plus the latest 3, so lost packets repair themselves.
+var int batch = 0
+if barstate.isrealtime and barstate.isconfirmed and str.length(feedKey) == 64
+    string rows = ""
+    for j = 0 to 39
+        int i = batch * 40 + j
+        if not na(close[i])
+            string row = "[" + str.tostring(int(time[i] / 1000)) + "," + str.tostring(open[i], format.mintick) + "," + str.tostring(high[i], format.mintick) + "," + str.tostring(low[i], format.mintick) + "," + str.tostring(close[i], format.mintick) + "]"
+            rows := rows + (str.length(rows) == 0 ? "" : ",") + row
+    for i = 0 to 2
+        if not na(close[i])
+            string row = "[" + str.tostring(int(time[i] / 1000)) + "," + str.tostring(open[i], format.mintick) + "," + str.tostring(high[i], format.mintick) + "," + str.tostring(low[i], format.mintick) + "," + str.tostring(close[i], format.mintick) + "]"
+            rows := rows + (str.length(rows) == 0 ? "" : ",") + row
+    string packet = "{\"key\":\"" + feedKey + "\",\"symbol\":\"OANDA:XAUUSD\",\"interval\":\"1\",\"timeMs\":" + str.tostring(time_close) + ",\"sentMs\":" + str.tostring(timenow) + ",\"price\":" + str.tostring(close, format.mintick) + ",\"bars\":[" + rows + "]}"
+    alert(packet, alert.freq_once_per_bar_close)
+    batch := (batch + 1) % 12
+plot(na, title = "Price-only bridge")

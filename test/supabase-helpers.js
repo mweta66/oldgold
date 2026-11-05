@@ -225,6 +225,7 @@ export async function fixture(t, overrides = {}, marketOptions = {}) {
           reason: "awaiting_mt5",
           source: "MT5:xauusd.s",
         });
+      if (name === "wg_tv_ingest") return json({ ok: true, skipped: false });
       if (name === "wg_mt5_ingest") return json({ ok: true, skipped: false });
       if (
         name === "wg_telegram_record_root" ||

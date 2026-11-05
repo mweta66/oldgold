@@ -156,7 +156,7 @@ test("Supabase Telegram rate limits persist the provider retry window without re
   const stamp = new Date().toISOString();
   const signal = {
     id: 1,
-    status: "open",
+    status: "stopped",
     direction: "buy",
     entry: 100,
     stop: 99,

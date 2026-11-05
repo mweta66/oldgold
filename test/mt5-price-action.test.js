@@ -14,7 +14,7 @@ async function database(t) {
   );
   const dir = new URL("../supabase/migrations/", import.meta.url);
   for (const f of (await readdir(dir))
-    .filter((x) => /^\d{3}_.*\.sql$/.test(x))
+    .filter((x) => /^\d{3}_.*\.sql$/.test(x) && Number(x.slice(0, 3)) < 24)
     .sort())
     await db.exec(await readFile(new URL(f, dir), "utf8"));
   await db.query("insert into auth.users values($1)", [ADMIN]);

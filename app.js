@@ -615,7 +615,7 @@ async function loadChart() {
       $("#chartSource").textContent =
         "MT5 من جهازك · تحديث تقريبي كل ثانية أثناء الاتصال";
       $("#chartNote").textContent =
-        "التحليل الحالي يعتمد شموع MT5 الحقيقية. عند انقطاع المنصة تتوقف الإشارات الجديدة حتى عودة بيانات حديثة.";
+        "MT5 مصدر أساسي، وTradingView مصدر احتياطي عند وصول تنبيهات دقيقة صحيحة. يتوقف إصدار الإشارات عند غياب بيانات المصدرين.";
       stopMt5Chart = mountHybridChart({
         container: $("#chartContainer"),
         status: $("#mt5ChartStatus"),
@@ -628,10 +628,10 @@ async function loadChart() {
         onSource(source) {
           $("#chartSource").textContent =
             source === "mt5"
-              ? "MT5 من جهازك · تحديث تقريبي كل ثانية · احتياطي سحابي تلقائي"
-              : "شارت OANDA مرئي فقط · انتظار اتصال MT5 للتحليل";
+              ? "MT5 من جهازك · تحديث تقريبي كل ثانية"
+              : "شارت OANDA من TradingView · بيانات التحليل حسب المصدر المتاح";
           $("#chartNote").textContent =
-            "محرك الإشارات يعتمد MT5 فقط. شارت TradingView للعرض ولا يُستخدم بديلًا لأسعار التحليل.";
+            "محرك الإشارات يفضل MT5، ويستخدم تنبيهات TradingView الموثّقة كمصدر احتياطي. متابعة كل صفقة تظل على مصدرها الأصلي.";
         },
       });
       return;
@@ -739,13 +739,17 @@ function signalCard(signal) {
     );
   wrap.append(head, levels, meta);
   if (signal.marketStrategy) {
-    if (signal.levelsBasis?.method === "mt5-m1-pa-rebounds-v1") {
+    if (
+      ["mt5-m1-pa-rebounds-v1", "tv-m1-pa-rebounds-v1"].includes(
+        signal.levelsBasis?.method,
+      )
+    ) {
       const b = signal.levelsBasis,
         z = b.support;
       wrap.append(
         element(
           "p",
-          `${z.kind === "support" ? "دعم" : "مقاومة"} ${price(z.level)} ±5$، ${z.touches} ارتدادات خلال 4 ساعات. تأكيد ${b.candle.pattern === "engulfing" ? "ابتلاع" : "شمعة رفض"} عند ${date(b.candle.time * 1000)} من شموع MT5 المكتملة.`,
+          `${z.kind === "support" ? "دعم" : "مقاومة"} ${price(z.level)} ±5$، ${z.touches} ارتدادات خلال 4 ساعات. تأكيد ${b.candle.pattern === "engulfing" ? "ابتلاع" : "شمعة رفض"} عند ${date(b.candle.time * 1000)} من شموع ${signal.marketStrategy.startsWith("tv-") ? "TradingView" : "MT5"} المكتملة.`,
           "small",
         ),
       );
@@ -793,9 +797,11 @@ function signalCard(signal) {
     wrap.append(
       element(
         "p",
-        signal.marketStrategy.startsWith("mt5-")
-          ? "إشارة من أسعار MT5. تحديث TP/SL رصد سعري، وليس تأكيد تنفيذ مركز فعلي."
-          : "إشارة آلية تجريبية · Gold API، وليس سعر وسيط. TP/SL عبور مرصود بين قراءات متقطعة، وليس تنفيذًا أو ربحًا فعليًا.",
+        signal.marketStrategy.startsWith("tv-")
+          ? "إشارة من TradingView OANDA. المتابعة عند إغلاق الدقيقة، ولا تثبت تنفيذًا أو ترتيب لمس المستويات داخل الشمعة."
+          : signal.marketStrategy.startsWith("mt5-")
+            ? "إشارة من أسعار MT5. تحديث TP/SL رصد سعري، وليس تأكيد تنفيذ مركز فعلي."
+            : "إشارة آلية تجريبية · Gold API، وليس سعر وسيط. TP/SL عبور مرصود بين قراءات متقطعة، وليس تنفيذًا أو ربحًا فعليًا.",
         "small muted",
       ),
     );
@@ -1078,11 +1084,13 @@ function renderHistory() {
         "المصدر",
         element(
           "span",
-          signal.marketStrategy?.startsWith("mt5-")
-            ? "MT5 · تأكيد برايس أكشن"
-            : signal.marketStrategy
-              ? "Gold API · آلي تجريبي"
-              : signal.symbol,
+          signal.marketStrategy?.startsWith("tv-")
+            ? "TradingView · احتياطي"
+            : signal.marketStrategy?.startsWith("mt5-")
+              ? "MT5 · تأكيد برايس أكشن"
+              : signal.marketStrategy
+                ? "Gold API · آلي تجريبي"
+                : signal.symbol,
         ),
       ],
       ["الحالة", state],
@@ -1386,6 +1394,8 @@ function renderMarket() {
       "انتظار اكتمال آخر 30 دقيقة بعد انقطاع؛ البيانات السابقة محفوظة",
     awaiting_fresh_quote: "انتظار سعر حديث؛ الإشارات الجديدة متوقفة",
     no_setup: "المتابعة تعمل؛ لا توجد فرصة مطابقة للقواعد الآن",
+    awaiting_sources: "انتظار أسعار MT5 أو تنبيهات TradingView حديثة",
+    awaiting_tradingview: "انتظار تنبيه دقيقة حديث من TradingView",
     awaiting_mt5: "انتظار أسعار وشموع MT5 حديثة؛ الإشارات الجديدة متوقفة",
     no_price_action: "لم تتأكد شمعة ابتلاع أو رفض للمستوى في اتجاه الصفقة",
     no_structure:
@@ -1417,15 +1427,15 @@ function renderMarket() {
     ),
     element(
       "p",
-      market.source.startsWith("MT5:")
-        ? "التحليل من سجل MT5: اتجاه EMA8/21 على 15 دقيقة، و3 ارتدادات خلال 4 ساعات، وتأكيد شمعة مكتملة من آخر شمعتين. شرط اختراق الـ20 دقيقة ملغى."
+      market.source.startsWith("MT5:") || market.source.startsWith("TV:")
+        ? "التحليل من سجل المصدر المختار: اتجاه EMA8/21 على 15 دقيقة، و3 ارتدادات خلال 4 ساعات، وتأكيد شمعة مكتملة من آخر شمعتين. شرط اختراق الـ20 دقيقة ملغى."
         : `فحص آخر 5 ساعات متحركة: ${market.progressMinutes} / ${market.requiredMinutes} دقيقة مرصودة (الحد الأدنى ${market.minimumObservedMinutes ?? 295}). لا تُملأ الدقائق المفقودة ولا يبدأ التجميع من الصفر بعد انقطاع قصير.`,
       "small",
     ),
     element(
       "p",
-      market.source.startsWith("MT5:")
-        ? "يُشترط سجل متصل لآخر 240 دقيقة و21 شمعة M15 مكتملة على الأقل، وسعر وسيط لا يتجاوز عمره15 ثانية. لا تُملأ الفجوات ولا تُستخدم شمعة لسه بتتكوّن كتأكيد."
+      market.source.startsWith("MT5:") || market.source.startsWith("TV:")
+        ? "يُشترط سجل متصل لآخر 240 دقيقة و21 شمعة M15 مكتملة على الأقل، وسعر MT5 لا يتجاوز عمره15 ثانية أو إغلاق TradingView لا يتجاوز عمره90 ثانية. لا تُملأ الفجوات ولا تُستخدم شمعة لسه بتتكوّن كتأكيد."
         : `الجزء الحديث: ${market.recentObservedMinutes ?? 0} / ${market.recentRequiredMinutes ?? 30} دقيقة؛ أكبر فاصل حديث ${market.recentMaxGapSeconds ?? 0} ثانية (الحد 90). تهيئة اتجاه M15: ${market.trendBars ?? 0} شمعة مكتملة (الحد الأدنى ${market.requiredTrendBars ?? 21})، من سجل محفوظ حتى 8 ساعات. الإشارة تتطلب سلامة البيانات ومطابقة القواعد.`,
       "small",
     ),
